@@ -8,6 +8,7 @@ import time
 
 from scraper import scrape_epaper
 from translator import translate_articles
+from ocr import run_ocr
 from renderer import render_html
 
 
@@ -21,13 +22,16 @@ def main():
 
     start = time.time()
 
-    print(f"[1/3] Scraping epaper for {date}...")
+    print(f"[1/4] Scraping epaper for {date}...")
     scrape_epaper(date)
 
-    print(f"\n[2/3] Translating articles...")
+    print(f"\n[2/4] Translating articles...")
     translate_articles(date)
 
-    print(f"\n[3/3] Rendering HTML...")
+    print(f"\n[3/4] Running OCR to detect text regions...")
+    run_ocr(date)
+
+    print(f"\n[4/4] Rendering HTML...")
     render_html(date)
 
     elapsed = time.time() - start

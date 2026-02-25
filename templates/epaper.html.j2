@@ -65,12 +65,8 @@
       position: relative;
     }
 
-    .page-slide {
-      display: none;
-    }
-    .page-slide.active {
-      display: block;
-    }
+    .page-slide { display: none; }
+    .page-slide.active { display: block; }
 
     .page-container {
       position: relative;
@@ -87,7 +83,59 @@
       height: auto;
     }
 
-    /* ── Article overlay boxes (percentage-positioned) ── */
+    /* ── Merged-region overlays (OCR mode) ── */
+    .text-region {
+      position: absolute;
+      background: rgba(255, 253, 248, 0.96);
+      overflow: hidden;
+      padding: 2px 4px;
+      box-sizing: border-box;
+      font-family: Georgia, 'Times New Roman', serif;
+      color: #1a1a1a;
+      transition: opacity 0.2s ease;
+      word-break: break-word;
+      hyphens: auto;
+    }
+
+    .text-region.role-headline {
+      font-weight: 900;
+      color: #111;
+      line-height: 1.15;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+
+    .text-region.role-subheadline {
+      font-weight: 700;
+      color: #c0392b;
+      line-height: 1.2;
+    }
+
+    .text-region.role-body {
+      font-weight: 400;
+      color: #222;
+      line-height: 1.35;
+      text-align: justify;
+    }
+
+    .text-region.role-byline {
+      background: rgba(255, 253, 248, 0.85);
+      font-weight: 400;
+      font-style: italic;
+      color: #555;
+      font-size: 9px;
+      line-height: 1.2;
+    }
+
+    .overlays-hidden .text-region,
+    .overlays-hidden .article-overlay {
+      opacity: 0 !important;
+      pointer-events: none;
+    }
+
+    /* ── Fallback: single-zone overlays (non-OCR mode) ── */
     .article-overlay {
       position: absolute;
       background: rgba(255, 252, 245, 0.94);
@@ -97,19 +145,12 @@
       cursor: pointer;
       border: 1px solid rgba(0,0,0,0.06);
       transition: all 0.2s ease;
-      opacity: 1;
     }
 
     .article-overlay:hover {
       background: rgba(255, 252, 245, 1);
       box-shadow: 0 2px 16px rgba(0,0,0,0.25);
       z-index: 10;
-      border-color: rgba(192, 57, 43, 0.4);
-    }
-
-    .overlays-hidden .article-overlay {
-      opacity: 0;
-      pointer-events: none;
     }
 
     .article-headline {
@@ -142,9 +183,7 @@
       transition: background 0.2s;
       backdrop-filter: blur(4px);
     }
-    .nav-btn:hover {
-      background: rgba(0,0,0,0.85);
-    }
+    .nav-btn:hover { background: rgba(0,0,0,0.85); }
     .prev-btn { left: 10px; }
     .next-btn { right: 10px; }
 
@@ -164,55 +203,35 @@
       backdrop-filter: blur(6px);
     }
 
-    .page-dots {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
+    .page-dots { display: flex; gap: 8px; align-items: center; }
     .page-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
+      width: 10px; height: 10px; border-radius: 50%;
       background: rgba(255,255,255,0.35);
-      cursor: pointer;
-      transition: all 0.2s;
+      cursor: pointer; transition: all 0.2s;
     }
-    .page-dot.active {
-      background: white;
-      transform: scale(1.3);
-    }
+    .page-dot.active { background: white; transform: scale(1.3); }
 
-    /* ── Page number label ── */
     .page-label {
-      position: fixed;
-      bottom: 60px;
-      left: 50%;
+      position: fixed; bottom: 60px; left: 50%;
       transform: translateX(-50%);
       color: rgba(255,255,255,0.6);
-      font-size: 13px;
-      font-family: Arial, sans-serif;
-      z-index: 50;
+      font-size: 13px; font-family: Arial, sans-serif; z-index: 50;
     }
 
-    /* ── Responsive ── */
     @media (max-width: 1200px) {
-      .page-container img {
-        width: 100vw;
-      }
+      .page-container img { width: 100vw; }
     }
   </style>
 </head>
 <body>
 
   <div class="header">
-    AAJ TAK — English Edition
-    <span>{{ date }}</span>
+    AAJ TAK — English Edition <span>{{ date }}</span>
   </div>
 
   <button class="toggle-btn" onclick="toggleOverlays()">Hide Overlays</button>
-
-  <button class="nav-btn prev-btn" onclick="changePage(-1)">‹</button>
-  <button class="nav-btn next-btn" onclick="changePage(1)">›</button>
+  <button class="nav-btn prev-btn" onclick="changePage(-1)">&#8249;</button>
+  <button class="nav-btn next-btn" onclick="changePage(1)">&#8250;</button>
 
   <div class="carousel-wrapper">
     {% for page in pages %}
@@ -220,25 +239,44 @@
       <div class="page-container">
         <img src="images/page_{{ page.page_num }}.jpg" alt="Page {{ page.page_num }}">
 
-        {% for art in page.articles %}
-        {% if art.headline_en or art.headline_hi %}
-        <div class="article-overlay"
-             style="top:{{ '%.3f'|format(art.top_pct) }}%; left:{{ '%.3f'|format(art.left_pct) }}%; width:{{ '%.3f'|format(art.width_pct) }}%; height:{{ '%.3f'|format(art.height_pct) }}%;"
-             onclick="window.open('{{ art.article_url }}', '_blank')"
-             data-headline="{{ (art.headline_en or art.headline_hi)|e }}"
-             data-body="{{ (art.body_en or art.body_hi)|e }}">
-          <div class="article-headline"></div>
-          <div class="article-body"></div>
-        </div>
+        {% if use_ocr %}
+          {# ── OCR mode: merged-region overlays ── #}
+          {% for art in page.articles %}
+            {% for rgn in art.get("regions", []) %}
+              {% if rgn.en_text %}
+              <div class="text-region role-{{ rgn.role }}"
+                   style="top:{{ '%.3f'|format(rgn.top_pct) }}%;
+                          left:{{ '%.3f'|format(rgn.left_pct) }}%;
+                          width:{{ '%.3f'|format(rgn.width_pct) }}%;
+                          height:{{ '%.3f'|format(rgn.height_pct) }}%;"
+                   data-text="{{ rgn.en_text|e }}"
+                   data-role="{{ rgn.role }}"
+                   data-avg-h="{{ rgn.avg_block_h }}">
+              </div>
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+        {% else %}
+          {# ── Fallback: single overlay per zone ── #}
+          {% for art in page.articles %}
+          {% if art.headline_en or art.headline_hi %}
+          <div class="article-overlay"
+               style="top:{{ '%.3f'|format(art.top_pct) }}%; left:{{ '%.3f'|format(art.left_pct) }}%; width:{{ '%.3f'|format(art.width_pct) }}%; height:{{ '%.3f'|format(art.height_pct) }}%;"
+               onclick="window.open('{{ art.article_url }}', '_blank')"
+               data-headline="{{ (art.headline_en or art.headline_hi)|e }}"
+               data-body="{{ (art.body_en or art.body_hi)|e }}">
+            <div class="article-headline"></div>
+            <div class="article-body"></div>
+          </div>
+          {% endif %}
+          {% endfor %}
         {% endif %}
-        {% endfor %}
       </div>
     </div>
     {% endfor %}
   </div>
 
   <div class="page-label" id="pageLabel">Page 1 of {{ pages|length }}</div>
-
   <div class="page-indicator">
     <div class="page-dots">
       {% for page in pages %}
@@ -249,22 +287,18 @@
   </div>
 
   <script>
-    // ── Carousel navigation ──
     let currentPage = 0;
     const slides = document.querySelectorAll('.page-slide');
     const dots = document.querySelectorAll('.page-dot');
     const totalPages = slides.length;
     const pageLabel = document.getElementById('pageLabel');
+    const USE_OCR = {{ 'true' if use_ocr else 'false' }};
 
     function changePage(delta) {
       currentPage = (currentPage + delta + totalPages) % totalPages;
       updateCarousel();
     }
-
-    function goToPage(idx) {
-      currentPage = idx;
-      updateCarousel();
-    }
+    function goToPage(idx) { currentPage = idx; updateCarousel(); }
 
     function updateCarousel() {
       slides.forEach((s, i) => s.classList.toggle('active', i === currentPage));
@@ -273,13 +307,11 @@
       requestAnimationFrame(() => fillOverlays(slides[currentPage]));
     }
 
-    // Keyboard navigation
     document.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') changePage(1);
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') changePage(-1);
     });
 
-    // ── Toggle overlays visibility ──
     let overlaysVisible = true;
     function toggleOverlays() {
       overlaysVisible = !overlaysVisible;
@@ -290,56 +322,100 @@
         overlaysVisible ? 'Hide Overlays' : 'Show Overlays';
     }
 
-    // ── Auto-fit text into overlay boxes ──
-    function fillOverlays(slideEl) {
-      if (!slideEl) return;
-      slideEl.querySelectorAll('.article-overlay').forEach(overlay => {
-        const headlineEl = overlay.querySelector('.article-headline');
-        const bodyEl = overlay.querySelector('.article-body');
+    /* ── Auto-fit text into a merged region ── */
+    function autoFitText(el) {
+      const text = el.dataset.text;
+      if (!text) return;
 
-        // Skip if already filled
-        if (headlineEl.textContent) return;
+      const role = el.dataset.role;
+      const boxW = el.offsetWidth;
+      const boxH = el.offsetHeight;
+      if (boxW < 5 || boxH < 5) return;
 
-        const headline = overlay.dataset.headline || '';
-        const body = overlay.dataset.body || '';
+      const avgH = parseFloat(el.dataset.avgH) || 16;
 
-        const boxW = overlay.offsetWidth;
-        const boxH = overlay.offsetHeight;
-        const area = boxW * boxH;
+      let fontSize;
+      if (role === 'headline') {
+        // Headlines: start from OCR block height scaled down for English
+        fontSize = Math.min(avgH * 0.6, boxH * 0.45, 44);
+        fontSize = Math.max(fontSize, 14);
+      } else if (role === 'subheadline') {
+        fontSize = Math.min(avgH * 0.5, boxH * 0.4, 28);
+        fontSize = Math.max(fontSize, 10);
+      } else {
+        // Body: estimate from area vs text length
+        // We want: total chars ≈ (boxW / charW) * (boxH / lineH)
+        // charW ≈ fontSize * 0.52, lineH ≈ fontSize * 1.35
+        // So: chars ≈ boxW*boxH / (fs^2 * 0.52 * 1.35)
+        //     fs ≈ sqrt(boxW*boxH / (chars * 0.52 * 1.35))
+        const charCount = Math.max(text.length, 1);
+        fontSize = Math.sqrt((boxW * boxH) / (charCount * 0.52 * 1.35));
+        fontSize = Math.max(6.5, Math.min(fontSize, avgH * 0.55, 18));
+      }
 
-        // Dynamic font sizing based on box area
-        let headlineSize, bodySize;
-        if (area > 300000) {
-          headlineSize = 17; bodySize = 13;
-        } else if (area > 150000) {
-          headlineSize = 15; bodySize = 12;
-        } else if (area > 80000) {
-          headlineSize = 13; bodySize = 11;
-        } else if (area > 30000) {
-          headlineSize = 11; bodySize = 10;
-        } else {
-          headlineSize = 10; bodySize = 9;
-        }
+      el.style.fontSize = fontSize + 'px';
+      el.textContent = text;
 
-        headlineEl.style.fontSize = headlineSize + 'px';
-        bodyEl.style.fontSize = bodySize + 'px';
+      // Shrink iteratively until text fits
+      let tries = 0;
+      while (el.scrollHeight > boxH + 2 && fontSize > 5 && tries < 25) {
+        fontSize *= 0.92;
+        el.style.fontSize = fontSize + 'px';
+        tries++;
+      }
 
-        headlineEl.textContent = headline;
-
-        // Calculate remaining height for body
-        const usedHeight = headlineEl.offsetHeight + 6;
-        const remainingHeight = boxH - usedHeight - 14;
-
-        if (remainingHeight > 20 && body) {
-          bodyEl.style.maxHeight = remainingHeight + 'px';
-          bodyEl.textContent = body;
-        }
-      });
+      // If still overflowing after max shrink, truncate with ellipsis
+      if (el.scrollHeight > boxH + 2) {
+        el.style.textOverflow = 'ellipsis';
+        el.style.webkitLineClamp = Math.max(1, Math.floor(boxH / (fontSize * 1.35)));
+        el.style.display = '-webkit-box';
+        el.style.webkitBoxOrient = 'vertical';
+      }
     }
 
-    // Fill overlays for the initial page
+    function fillOverlays(slideEl) {
+      if (!slideEl) return;
+
+      if (USE_OCR) {
+        slideEl.querySelectorAll('.text-region').forEach(el => {
+          if (el.dataset.filled) return;
+          autoFitText(el);
+          el.dataset.filled = '1';
+        });
+      } else {
+        // Fallback mode
+        slideEl.querySelectorAll('.article-overlay').forEach(overlay => {
+          const headlineEl = overlay.querySelector('.article-headline');
+          const bodyEl = overlay.querySelector('.article-body');
+          if (headlineEl.textContent) return;
+
+          const headline = overlay.dataset.headline || '';
+          const body = overlay.dataset.body || '';
+          const boxW = overlay.offsetWidth;
+          const boxH = overlay.offsetHeight;
+          const area = boxW * boxH;
+
+          let hs, bs;
+          if (area > 300000) { hs = 17; bs = 13; }
+          else if (area > 150000) { hs = 15; bs = 12; }
+          else if (area > 80000) { hs = 13; bs = 11; }
+          else if (area > 30000) { hs = 11; bs = 10; }
+          else { hs = 10; bs = 9; }
+
+          headlineEl.style.fontSize = hs + 'px';
+          bodyEl.style.fontSize = bs + 'px';
+          headlineEl.textContent = headline;
+
+          const rem = boxH - headlineEl.offsetHeight - 20;
+          if (rem > 20 && body) {
+            bodyEl.style.maxHeight = rem + 'px';
+            bodyEl.textContent = body;
+          }
+        });
+      }
+    }
+
     fillOverlays(slides[0]);
   </script>
-
 </body>
 </html>
