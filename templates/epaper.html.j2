@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aaj Tak Epaper — English Edition — {{ date }}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #2a2a2a;
+      font-family: Georgia, 'Times New Roman', serif;
+      color: #1a1a1a;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: #c0392b;
+      color: white;
+      text-align: center;
+      padding: 14px 20px;
+      font-size: 18px;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .header span {
+      font-weight: normal;
+      font-size: 14px;
+      opacity: 0.85;
+      margin-left: 12px;
+    }
+
+    /* ── Carousel ── */
+    .carousel-wrapper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: calc(100vh - 50px);
+      padding: 20px;
+      position: relative;
+    }
+
+    .page-slide {
+      display: none;
+    }
+    .page-slide.active {
+      display: block;
+    }
+
+    .page-container {
+      position: relative;
+      display: inline-block;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      background: white;
+    }
+
+    .page-container img {
+      display: block;
+      width: 1120px;
+      height: auto;
+    }
+
+    /* ── Article overlay boxes ── */
+    .article-overlay {
+      position: absolute;
+      background: rgba(255, 252, 245, 0.96);
+      overflow: hidden;
+      padding: 6px 8px;
+      box-sizing: border-box;
+      cursor: pointer;
+      border: 1px solid rgba(0,0,0,0.08);
+      transition: all 0.15s ease;
+    }
+
+    .article-overlay:hover {
+      background: rgba(255, 252, 245, 1);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+      z-index: 10;
+      border-color: rgba(0,0,0,0.15);
+    }
+
+    .article-headline {
+      font-weight: bold;
+      line-height: 1.3;
+      margin-bottom: 3px;
+      color: #1a1a1a;
+    }
+
+    .article-body {
+      line-height: 1.4;
+      color: #333;
+      overflow: hidden;
+    }
+
+    /* ── Navigation ── */
+    .nav-btn {
+      position: fixed;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(0,0,0,0.6);
+      color: white;
+      border: none;
+      font-size: 32px;
+      width: 50px;
+      height: 80px;
+      cursor: pointer;
+      z-index: 50;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+    .nav-btn:hover {
+      background: rgba(0,0,0,0.85);
+    }
+    .prev-btn { left: 10px; }
+    .next-btn { right: 10px; }
+
+    /* ── Page indicator ── */
+    .page-indicator {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.7);
+      color: white;
+      padding: 8px 20px;
+      border-radius: 20px;
+      font-size: 14px;
+      z-index: 50;
+      font-family: Arial, sans-serif;
+    }
+
+    .page-dots {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .page-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.4);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .page-dot.active {
+      background: white;
+      transform: scale(1.2);
+    }
+
+    /* ── Responsive: scale down on smaller screens ── */
+    @media (max-width: 1200px) {
+      .page-container img {
+        width: 100vw;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    AAJ TAK — English Edition
+    <span>{{ date }}</span>
+  </div>
+
+  <button class="nav-btn prev-btn" onclick="changePage(-1)">‹</button>
+  <button class="nav-btn next-btn" onclick="changePage(1)">›</button>
+
+  <div class="carousel-wrapper">
+    {% for page in pages %}
+    <div class="page-slide{% if loop.first %} active{% endif %}" id="page-{{ page.page_num }}">
+      <div class="page-container">
+        <img src="images/page_{{ page.page_num }}.jpg" alt="Page {{ page.page_num }}">
+
+        {% for art in page.articles %}
+        {% if art.headline_en or art.headline_hi %}
+        <div class="article-overlay"
+             style="top:{{ art.top }}px; left:{{ art.left }}px; width:{{ art.width }}px; height:{{ art.height }}px;"
+             onclick="window.open('{{ art.article_url }}', '_blank')"
+             data-headline="{{ (art.headline_en or art.headline_hi)|e }}"
+             data-body="{{ (art.body_en or art.body_hi)|e }}">
+          <div class="article-headline"></div>
+          <div class="article-body"></div>
+        </div>
+        {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="page-indicator">
+    <div class="page-dots">
+      {% for page in pages %}
+      <div class="page-dot{% if loop.first %} active{% endif %}"
+           onclick="goToPage({{ loop.index0 }})"></div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <script>
+    // ── Carousel navigation ──
+    let currentPage = 0;
+    const slides = document.querySelectorAll('.page-slide');
+    const dots = document.querySelectorAll('.page-dot');
+    const totalPages = slides.length;
+
+    function changePage(delta) {
+      currentPage = (currentPage + delta + totalPages) % totalPages;
+      updateCarousel();
+    }
+
+    function goToPage(idx) {
+      currentPage = idx;
+      updateCarousel();
+    }
+
+    function updateCarousel() {
+      slides.forEach((s, i) => s.classList.toggle('active', i === currentPage));
+      dots.forEach((d, i) => d.classList.toggle('active', i === currentPage));
+    }
+
+    // Keyboard navigation
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') changePage(1);
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') changePage(-1);
+    });
+
+    // ── Auto-fit text into overlay boxes ──
+    document.querySelectorAll('.article-overlay').forEach(overlay => {
+      const headline = overlay.dataset.headline || '';
+      const body = overlay.dataset.body || '';
+      const headlineEl = overlay.querySelector('.article-headline');
+      const bodyEl = overlay.querySelector('.article-body');
+
+      const boxW = overlay.offsetWidth;
+      const boxH = overlay.offsetHeight;
+      const area = boxW * boxH;
+
+      // Dynamic font sizing based on box area
+      let headlineSize, bodySize;
+      if (area > 300000) {
+        headlineSize = 16; bodySize = 13;
+      } else if (area > 100000) {
+        headlineSize = 14; bodySize = 12;
+      } else if (area > 40000) {
+        headlineSize = 12; bodySize = 10;
+      } else {
+        headlineSize = 10; bodySize = 9;
+      }
+
+      headlineEl.style.fontSize = headlineSize + 'px';
+      bodyEl.style.fontSize = bodySize + 'px';
+
+      headlineEl.textContent = headline;
+
+      // Calculate remaining height for body
+      const usedHeight = headlineEl.offsetHeight + 6; // 6px margin
+      const remainingHeight = boxH - usedHeight - 12; // 12px padding
+
+      if (remainingHeight > 20 && body) {
+        bodyEl.style.maxHeight = remainingHeight + 'px';
+        bodyEl.textContent = body;
+      }
+    });
+  </script>
+
+</body>
+</html>
