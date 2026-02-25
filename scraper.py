@@ -15,7 +15,16 @@ from playwright.sync_api import sync_playwright
 
 DATA_DIR = "data"
 OUTPUT_DIR = "output"
-IMAGES_DIR = os.path.join(OUTPUT_DIR, "images")
+
+
+def _paths(date_str: str):
+    """Return date-namespaced directories and file paths."""
+    data_dir = os.path.join(DATA_DIR, date_str)
+    output_dir = os.path.join(OUTPUT_DIR, date_str)
+    images_dir = os.path.join(output_dir, "images")
+    raw_file = os.path.join(data_dir, "articles_raw.json")
+    return data_dir, output_dir, images_dir, raw_file
+
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -42,8 +51,10 @@ def scrape_epaper(date_str: str):
     ddmmyyyy = dt.strftime("%d%m%Y")
     yyyy_m_d = f"{dt.year}-{dt.month}-{dt.day}"
 
-    os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs(IMAGES_DIR, exist_ok=True)
+    data_dir, output_dir, images_dir, raw_file = _paths(date_str)
+
+    os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(images_dir, exist_ok=True)
 
     # ── Step 1: Load the epaper page with Playwright (JS-rendered) ──
     print("  Loading epaper.aajtak.in with headless browser...")
@@ -70,7 +81,7 @@ def scrape_epaper(date_str: str):
     container = soup.find(id="ImageContainer")
     if not container:
         print("  ERROR: Could not find #ImageContainer. Dumping HTML for debug.")
-        with open(os.path.join(DATA_DIR, "debug_epaper.html"), "w", encoding="utf-8") as f:
+        with open(os.path.join(data_dir, "debug_epaper.html"), "w", encoding="utf-8") as f:
             f.write(html)
         return
 
@@ -96,7 +107,7 @@ def scrape_epaper(date_str: str):
                 f"epaperimages/{ddmmyyyy}/{ddmmyyyy}-md-hr-{page_idx}.jpg"
             )
 
-        image_local = os.path.join(IMAGES_DIR, f"page_{page_idx}.jpg")
+        image_local = os.path.join(images_dir, f"page_{page_idx}.jpg")
 
         # ── Parse pagerectangle article zones ──
         rectangles = slide.find_all("div", class_="pagerectangle")
@@ -229,7 +240,7 @@ def scrape_epaper(date_str: str):
         "date": date_str,
         "pages": pages,
     }
-    out_path = os.path.join(DATA_DIR, "articles_raw.json")
+    out_path = os.path.join(data_dir, "articles_raw.json")
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
 

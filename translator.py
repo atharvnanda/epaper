@@ -12,8 +12,15 @@ from openai import OpenAI
 load_dotenv()
 
 DATA_DIR = "data"
-RAW_FILE = os.path.join(DATA_DIR, "articles_raw.json")
-TRANSLATED_FILE = os.path.join(DATA_DIR, "articles_translated.json")
+
+
+def _paths(date_str: str):
+    """Return date-namespaced file paths."""
+    data_dir = os.path.join(DATA_DIR, date_str)
+    raw_file = os.path.join(data_dir, "articles_raw.json")
+    translated_file = os.path.join(data_dir, "articles_translated.json")
+    return raw_file, translated_file
+
 
 TRANSLATION_PROMPT = """You are a professional Hindi-to-English newspaper translator.
 Translate the following Hindi newspaper article into polished, 
@@ -38,8 +45,10 @@ Respond in this exact JSON format:
 }}"""
 
 
-def translate_articles():
+def translate_articles(date_str: str):
     """Load raw articles, translate via Grok, save translated JSON."""
+
+    raw_file, translated_file = _paths(date_str)
 
     api_key = os.getenv("GROK_API_KEY")
     if not api_key or api_key == "your_grok_api_key_here":
@@ -52,17 +61,17 @@ def translate_articles():
     )
 
     # Load raw data
-    if not os.path.exists(RAW_FILE):
-        print(f"  ERROR: {RAW_FILE} not found. Run scraper.py first.")
+    if not os.path.exists(raw_file):
+        print(f"  ERROR: {raw_file} not found. Run scraper.py first.")
         return
 
-    with open(RAW_FILE, "r", encoding="utf-8") as f:
+    with open(raw_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     # Check if we have a partial translation to resume from
     existing_translations = {}
-    if os.path.exists(TRANSLATED_FILE):
-        with open(TRANSLATED_FILE, "r", encoding="utf-8") as f:
+    if os.path.exists(translated_file):
+        with open(translated_file, "r", encoding="utf-8") as f:
             existing = json.load(f)
         # Build cache of already-translated storyids
         for pg in existing.get("pages", []):
@@ -159,7 +168,7 @@ def translate_articles():
                 art["body_en"] = art.get("body_hi", "")
 
     # Save
-    with open(TRANSLATED_FILE, "w", encoding="utf-8") as f:
+    with open(translated_file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
     total = sum(len(pg["articles"]) for pg in data["pages"])
@@ -168,11 +177,13 @@ def translate_articles():
         for a in pg["articles"]
         if a.get("headline_en") and a["headline_en"] != a.get("headline_hi")
     )
-    print(f"\n  Done! Saved {TRANSLATED_FILE}")
+    print(f"\n  Done! Saved {translated_file}")
     print(f"  Total article zones: {total}")
     print(f"  Newly translated: {len(translated_cache)}")
     print(f"  From cache: {len(existing_translations)}")
 
 
 if __name__ == "__main__":
-    translate_articles()
+    import sys
+    date = sys.argv[1] if len(sys.argv) > 1 else "2026-02-25"
+    translate_articles(date)

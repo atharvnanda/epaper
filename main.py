@@ -25,7 +25,7 @@ def main():
     scrape_epaper(date)
 
     print(f"\n[2/3] Translating articles...")
-    translate_articles()
+    translate_articles(date)
 
     print(f"\n[3/3] Rendering HTML...")
     render_html(date)
@@ -33,7 +33,7 @@ def main():
     elapsed = time.time() - start
     print(f"\n═══════════════════════════════════════════")
     print(f"  All done in {elapsed:.1f}s!")
-    print(f"  Open output/index.html in your browser.")
+    print(f"  Open output/{date}/index.html in your browser.")
     print(f"═══════════════════════════════════════════")
 
 

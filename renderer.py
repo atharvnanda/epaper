@@ -9,22 +9,31 @@ from jinja2 import Environment, FileSystemLoader
 
 DATA_DIR = "data"
 OUTPUT_DIR = "output"
-TRANSLATED_FILE = os.path.join(DATA_DIR, "articles_translated.json")
 TEMPLATE_DIR = "templates"
-OUTPUT_HTML = os.path.join(OUTPUT_DIR, "index.html")
+
+
+def _paths(date_str: str):
+    """Return date-namespaced file paths."""
+    data_dir = os.path.join(DATA_DIR, date_str)
+    output_dir = os.path.join(OUTPUT_DIR, date_str)
+    translated_file = os.path.join(data_dir, "articles_translated.json")
+    output_html = os.path.join(output_dir, "index.html")
+    return translated_file, output_dir, output_html
 
 
 def render_html(date_str: str):
-    """Load translated data and render to output/index.html."""
+    """Load translated data and render to output/{date}/index.html."""
 
-    if not os.path.exists(TRANSLATED_FILE):
-        print(f"  ERROR: {TRANSLATED_FILE} not found. Run translator.py first.")
+    translated_file, output_dir, output_html = _paths(date_str)
+
+    if not os.path.exists(translated_file):
+        print(f"  ERROR: {translated_file} not found. Run translator.py first.")
         return
 
-    with open(TRANSLATED_FILE, "r", encoding="utf-8") as f:
+    with open(translated_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
     template = env.get_template("epaper.html.j2")
@@ -34,13 +43,13 @@ def render_html(date_str: str):
         pages=data["pages"],
     )
 
-    with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
+    with open(output_html, "w", encoding="utf-8") as f:
         f.write(html)
 
     total_articles = sum(len(pg["articles"]) for pg in data["pages"])
-    print(f"  Done! Generated {OUTPUT_HTML}")
+    print(f"  Done! Generated {output_html}")
     print(f"  Pages: {len(data['pages'])}, Article overlays: {total_articles}")
-    print(f"  Open output/index.html in your browser to view.")
+    print(f"  Open {output_html} in your browser to view.")
 
 
 if __name__ == "__main__":
