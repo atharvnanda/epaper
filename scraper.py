@@ -69,8 +69,22 @@ def scrape_epaper(date_str: str):
 
         # Wait for the carousel to render
         page.wait_for_selector("#ImageContainer", timeout=30000)
-        # Give extra time for all slides + pagerectangle divs to load
-        time.sleep(5)
+        time.sleep(3)
+
+        # Click through all pages to force lazy-loaded pagerectangles to appear
+        print("  Clicking through all carousel pages to load article zones...")
+        for pg_click in range(1, 13):
+            next_btn = page.query_selector("button.next")
+            if next_btn:
+                try:
+                    next_btn.click(timeout=5000)
+                    time.sleep(1.5)
+                except Exception:
+                    break  # Last page — next button hidden, we're done
+            print(f"    Page {pg_click + 1} loaded")
+
+        # Small extra wait for any final DOM updates
+        time.sleep(2)
 
         html = page.content()
         browser.close()
@@ -256,42 +270,50 @@ def scrape_epaper(date_str: str):
 
 def _extract_article_text(soup: BeautifulSoup) -> tuple:
     """
-    Extract headline and body text from an article page.
+    Extract headline and body text from an Aaj Tak epaper article page.
     Returns (headline_str, body_str).
     """
     headline = ""
     body = ""
 
-    # Try multiple selectors for headline
-    for sel in ["h1", ".story-headline", ".article-heading", ".heading"]:
-        el = soup.select_one(sel)
-        if el and el.get_text(strip=True):
-            headline = el.get_text(strip=True)
-            break
+    # Headline: <p class="haedlinesstory"> (note: their typo, not ours)
+    el = soup.select_one("p.haedlinesstory")
+    if el:
+        headline = el.get_text(strip=True)
 
-    # Try multiple selectors for body
-    for sel in [
-        ".story-content", ".article-body", ".story-body",
-        ".content-area", ".article-content", ".story-detail",
-        "article",
-    ]:
-        el = soup.select_one(sel)
-        if el:
-            # Get all paragraph text
-            paragraphs = el.find_all("p")
-            if paragraphs:
-                body = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
-            else:
-                body = el.get_text(strip=True)
-            if body:
+    # Fallback headline selectors
+    if not headline:
+        for sel in [".headline_textview", "h1", ".story-headline"]:
+            el = soup.select_one(sel)
+            if el and el.get_text(strip=True):
+                headline = el.get_text(strip=True)
                 break
 
-    # Fallback: if no body found, try the main content div
+    # Body: all <p> tags inside <div class="body_text_main">
+    body_div = soup.select_one("div.body_text_main")
+    if body_div:
+        paragraphs = body_div.find_all("p")
+        if paragraphs:
+            body = "\n\n".join(
+                p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True)
+            )
+        else:
+            body = body_div.get_text(strip=True)
+
+    # Fallback body selectors
     if not body:
-        main = soup.find("main") or soup.find("div", {"role": "main"})
-        if main:
-            paragraphs = main.find_all("p")
-            body = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+        for sel in [".mid_content", ".body_content", ".story-content", "article"]:
+            el = soup.select_one(sel)
+            if el:
+                paragraphs = el.find_all("p")
+                if paragraphs:
+                    body = "\n\n".join(
+                        p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True)
+                    )
+                else:
+                    body = el.get_text(strip=True)
+                if body:
+                    break
 
     return headline, body
 
