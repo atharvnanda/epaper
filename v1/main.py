@@ -6,10 +6,10 @@ Main orchestrator: scrape → translate → render
 import sys
 import time
 
-from scraper import scrape_epaper
-from translator import translate_articles
-from ocr import run_ocr
-from renderer import render_html
+from v1.scraper import scrape_epaper
+from v1.translator import translate_articles
+from v1.ocr import run_ocr
+from v1.renderer import render_html
 
 
 def main():

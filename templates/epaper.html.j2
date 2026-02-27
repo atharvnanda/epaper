@@ -98,9 +98,11 @@
     }
 
     .text-region.role-headline {
+      font-family: 'Franklin Gothic Heavy', 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
       font-weight: 900;
+      letter-spacing: 0.01em;
       color: #111;
-      line-height: 1.15;
+      line-height: 1.08;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -108,12 +110,15 @@
     }
 
     .text-region.role-subheadline {
-      font-weight: 700;
+      font-family: 'Franklin Gothic Heavy', 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+      font-weight: 800;
+      letter-spacing: 0.008em;
       color: #c0392b;
-      line-height: 1.2;
+      line-height: 1.12;
     }
 
     .text-region.role-body {
+      font-family: Georgia, 'Times New Roman', serif;
       font-weight: 400;
       color: #222;
       line-height: 1.35;
@@ -325,12 +330,12 @@
     /* ── Auto-fit text into a merged region ── */
     function autoFitText(el) {
       const text = el.dataset.text;
-      if (!text) return;
+      if (!text) return false;
 
       const role = el.dataset.role;
       const boxW = el.offsetWidth;
       const boxH = el.offsetHeight;
-      if (boxW < 5 || boxH < 5) return;
+      if (boxW < 5 || boxH < 5) return false;
 
       const avgH = parseFloat(el.dataset.avgH) || 16;
 
@@ -343,23 +348,23 @@
         fontSize = Math.min(avgH * 0.5, boxH * 0.4, 28);
         fontSize = Math.max(fontSize, 10);
       } else {
-        // Body: estimate from area vs text length
-        // We want: total chars ≈ (boxW / charW) * (boxH / lineH)
-        // charW ≈ fontSize * 0.52, lineH ≈ fontSize * 1.35
-        // So: chars ≈ boxW*boxH / (fs^2 * 0.52 * 1.35)
-        //     fs ≈ sqrt(boxW*boxH / (chars * 0.52 * 1.35))
-        const charCount = Math.max(text.length, 1);
-        fontSize = Math.sqrt((boxW * boxH) / (charCount * 0.52 * 1.35));
-        fontSize = Math.max(6.5, Math.min(fontSize, avgH * 0.55, 18));
+        // Body: keep a stable OCR-derived size; text is already truncated
+        // server-side by char capacity, so avoid aggressive shrink-to-cram.
+        fontSize = Math.min(avgH * 0.52, boxH * 0.18, 16);
+        fontSize = Math.max(fontSize, 8.2);
       }
 
       el.style.fontSize = fontSize + 'px';
       el.textContent = text;
 
-      // Shrink iteratively until text fits
+      // For headline/subheadline, allow shrink-to-fit.
+      // For body, do at most tiny adjustment and let truncation handle overflow.
       let tries = 0;
-      while (el.scrollHeight > boxH + 2 && fontSize > 5 && tries < 25) {
-        fontSize *= 0.92;
+      const maxTries = role === 'body' ? 3 : 25;
+      const shrinkFactor = role === 'body' ? 0.97 : 0.92;
+      const minFont = role === 'body' ? 7.8 : 5;
+      while (el.scrollHeight > boxH + 2 && fontSize > minFont && tries < maxTries) {
+        fontSize *= shrinkFactor;
         el.style.fontSize = fontSize + 'px';
         tries++;
       }
@@ -371,6 +376,8 @@
         el.style.display = '-webkit-box';
         el.style.webkitBoxOrient = 'vertical';
       }
+
+      return true;
     }
 
     function fillOverlays(slideEl) {
@@ -379,8 +386,10 @@
       if (USE_OCR) {
         slideEl.querySelectorAll('.text-region').forEach(el => {
           if (el.dataset.filled) return;
-          autoFitText(el);
-          el.dataset.filled = '1';
+          const ok = autoFitText(el);
+          if (ok) {
+            el.dataset.filled = '1';
+          }
         });
       } else {
         // Fallback mode
@@ -415,7 +424,15 @@
       }
     }
 
+    // Initial attempt + retries once page images are loaded
     fillOverlays(slides[0]);
+    document.querySelectorAll('.page-container img').forEach((img) => {
+      if (img.complete) return;
+      img.addEventListener('load', () => {
+        const slide = img.closest('.page-slide');
+        fillOverlays(slide);
+      });
+    });
   </script>
 </body>
 </html>

@@ -19,6 +19,10 @@ TEMPLATE_DIR = "templates"
 COORD_SPACE_W = 1128
 COORD_SPACE_H = 2050
 
+# Body text assignment is truncated to per-region capacity estimated from
+# overlay geometry (box width/height + OCR-derived font-size proxy).
+CHAR_FIT_SAFETY = float(os.getenv("CHAR_FIT_SAFETY", "0.90"))
+
 
 def _paths(date_str: str):
     """Return date-namespaced file paths."""
@@ -38,6 +42,162 @@ def _convert_to_pct(pages):
             art["left_pct"] = art["left"] / COORD_SPACE_W * 100
             art["width_pct"] = art["width"] / COORD_SPACE_W * 100
             art["height_pct"] = art["height"] / COORD_SPACE_H * 100
+
+
+def _take_text_chunk(text: str, cap: int):
+    """Take up to cap chars from text, preferring a natural break.
+
+    Returns (chunk, remainder).
+    """
+    txt = (text or "").lstrip()
+    if not txt or cap <= 0:
+        return "", txt
+    if len(txt) <= cap:
+        return txt.rstrip(), ""
+
+    # 1) Prefer finishing the current sentence shortly *after* cap.
+    # This avoids abrupt mid-sentence endings while keeping overflow bounded.
+    sentence_marks = ".!?"
+    extend = max(24, int(cap * 0.18))
+    scan_end = min(len(txt), cap + extend)
+    for i in range(cap, scan_end):
+        if txt[i] in sentence_marks:
+            cut = i + 1
+            chunk = txt[:cut].rstrip()
+            remainder = txt[cut:].lstrip()
+            return chunk, remainder
+
+    # 2) If no forward sentence end, prefer a prior sentence boundary.
+    min_idx = max(1, int(cap * 0.55))
+    for i in range(cap, min_idx - 1, -1):
+        if txt[i - 1] in sentence_marks:
+            cut = i
+            chunk = txt[:cut].rstrip()
+            remainder = txt[cut:].lstrip()
+            return chunk, remainder
+
+    # 3) Fallback to clean word/punctuation boundary near cap.
+    cut = -1
+    for i in range(cap, min_idx - 1, -1):
+        ch = txt[i - 1]
+        if ch.isspace() or ch in ".,;:!?)]}—-":
+            cut = i
+            break
+
+    if cut == -1:
+        cut = cap
+
+    chunk = txt[:cut].rstrip()
+    remainder = txt[cut:].lstrip()
+    return chunk, remainder
+
+
+def _estimate_body_char_cap(region: dict) -> int:
+    """Estimate how many body chars can fit in this region.
+
+    Uses region geometry and the same body font heuristic used in template JS.
+    """
+    box_w = max(1.0, (region.get("width_pct", 0.0) / 100.0) * COORD_SPACE_W - 8.0)
+    box_h = max(1.0, (region.get("height_pct", 0.0) / 100.0) * COORD_SPACE_H - 4.0)
+    avg_h = max(8.0, float(region.get("avg_block_h", 12.0)))
+
+    # Mirror body font heuristic from templates/epaper.html.j2
+    font_size = min(avg_h * 0.52, box_h * 0.18, 16.0)
+    font_size = max(font_size, 8.2)
+
+    char_w = max(1.0, font_size * 0.52)
+    line_h = max(1.0, font_size * 1.35)
+    chars_per_line = max(1, int(box_w // char_w))
+    lines = max(1, int(box_h // line_h))
+
+    cap = int(chars_per_line * lines * CHAR_FIT_SAFETY)
+    return max(1, cap)
+
+
+def _deoverlap_body_regions(regions):
+    """Trim horizontal overlap between neighboring body regions.
+
+    Keeps visual columns side-by-side instead of letting one overlay intrude
+    into the next.
+    """
+    body = [r for r in regions if r.get("role") == "body"]
+    if len(body) <= 1:
+        return
+
+    # Multiple passes to settle pairwise overlaps.
+    for _ in range(2):
+        for i in range(len(body)):
+            a = body[i]
+            ax0 = a["left_pct"]
+            ax1 = a["left_pct"] + a["width_pct"]
+            ay0 = a["top_pct"]
+            ay1 = a["top_pct"] + a["height_pct"]
+            ah = max(0.001, ay1 - ay0)
+
+            for j in range(i + 1, len(body)):
+                b = body[j]
+                bx0 = b["left_pct"]
+                bx1 = b["left_pct"] + b["width_pct"]
+                by0 = b["top_pct"]
+                by1 = b["top_pct"] + b["height_pct"]
+                bh = max(0.001, by1 - by0)
+
+                # Only treat as conflicting columns if they overlap vertically enough.
+                ov_y = min(ay1, by1) - max(ay0, by0)
+                if ov_y <= 0:
+                    continue
+                if ov_y / min(ah, bh) < 0.45:
+                    continue
+
+                ov_x0 = max(ax0, bx0)
+                ov_x1 = min(ax1, bx1)
+                if ov_x1 <= ov_x0:
+                    continue
+
+                # Determine left vs right region by center x.
+                ac = (ax0 + ax1) / 2
+                bc = (bx0 + bx1) / 2
+                if ac <= bc:
+                    left_r, right_r = a, b
+                else:
+                    left_r, right_r = b, a
+
+                lx0 = left_r["left_pct"]
+                lx1 = left_r["left_pct"] + left_r["width_pct"]
+                rx0 = right_r["left_pct"]
+                rx1 = right_r["left_pct"] + right_r["width_pct"]
+
+                ov0 = max(lx0, rx0)
+                ov1 = min(lx1, rx1)
+                if ov1 <= ov0:
+                    continue
+
+                seam = (ov0 + ov1) / 2
+                gutter = 0.10
+
+                new_lx1 = min(lx1, seam - gutter / 2)
+                new_rx0 = max(rx0, seam + gutter / 2)
+
+                # Keep sane minimum widths.
+                if new_lx1 - lx0 < 0.8 or rx1 - new_rx0 < 0.8:
+                    continue
+
+                left_r["left_pct"] = round(lx0, 3)
+                left_r["width_pct"] = round(new_lx1 - lx0, 3)
+                right_r["left_pct"] = round(new_rx0, 3)
+                right_r["width_pct"] = round(rx1 - new_rx0, 3)
+
+                # Refresh local values if current pair included a or b.
+                if left_r is a or right_r is a:
+                    ax0 = a["left_pct"]
+                    ax1 = a["left_pct"] + a["width_pct"]
+                if left_r is b or right_r is b:
+                    bx0 = b["left_pct"]
+                    bx1 = b["left_pct"] + b["width_pct"]
+
+    # Recompute box-fit capacities after any width adjustments.
+    for r in body:
+        r["char_cap"] = _estimate_body_char_cap(r)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -219,15 +379,15 @@ def _merge_blocks_into_regions(art):
             # Body / byline: column-aware clustering
             clusters = _column_cluster(blks, gap_y_pct=2.5)
 
-        for grp in clusters:
+        for idx, grp in enumerate(clusters):
             top = min(b["top_pct"] for b in grp)
             left = min(b["left_pct"] for b in grp)
             bottom = max(b["top_pct"] + b["height_pct"] for b in grp)
             right = max(b["left_pct"] + b["width_pct"] for b in grp)
 
             avg_height = sum(b["height"] for b in grp) / len(grp)
-
-            regions.append({
+            ocr_char_count = sum(len((b.get("ocr_text") or "").strip()) for b in grp)
+            region = {
                 "role": role,
                 "top_pct": round(top, 3),
                 "left_pct": round(left, 3),
@@ -235,9 +395,33 @@ def _merge_blocks_into_regions(art):
                 "height_pct": round(bottom - top, 3),
                 "avg_block_h": round(avg_height, 1),
                 "block_count": len(grp),
-            })
+                "ocr_char_count": int(ocr_char_count),
+                "_body_order": idx if role == "body" else -1,
+            }
+            if role == "body":
+                region["char_cap"] = _estimate_body_char_cap(region)
+            else:
+                # For non-body regions, retain OCR-char metadata only.
+                region["char_cap"] = int(ocr_char_count)
 
-    regions.sort(key=lambda r: (_ROLE_PRIORITY.get(r["role"], 9), r["top_pct"]))
+            regions.append(region)
+
+    def _sort_key(r):
+        role_rank = _ROLE_PRIORITY.get(r["role"], 9)
+        if r["role"] == "body":
+            # Preserve column-cluster order for body text (better continuity
+            # in multi-column stories).
+            return (role_rank, r.get("_body_order", 0))
+        return (role_rank, r["top_pct"], r["left_pct"])
+
+    regions.sort(key=_sort_key)
+
+    # Ensure neighboring body columns don't overlap.
+    _deoverlap_body_regions(regions)
+
+    for r in regions:
+        if "_body_order" in r:
+            del r["_body_order"]
     return regions
 
 
@@ -274,25 +458,17 @@ def _assign_text_to_regions(art, regions):
         else:
             sr["en_text"] = ""
 
-    # ── Body: distribute remaining text across body regions by area ──
-    remaining_text = " ".join(body_lines[sub_offset:])
-    if body_regions and remaining_text:
-        words = remaining_text.split()
-        total_area = sum(r["width_pct"] * r["height_pct"] for r in body_regions) or 1
+    # ── Body: sequential truncation by box-fit per-region char cap ──
+    remaining_text = " ".join(body_lines[sub_offset:]).strip()
+    for br in body_regions:
+        cap = int(br.get("char_cap", 0) or 0)
+        source_text = remaining_text
+        chunk, remaining_text = _take_text_chunk(remaining_text, cap)
+        br["en_text"] = chunk
+        br["assigned_chars"] = len(chunk)
+        br["truncated"] = len((source_text or "").lstrip()) > len(chunk)
 
-        word_idx = 0
-        for i, br in enumerate(body_regions):
-            area = br["width_pct"] * br["height_pct"]
-            proportion = area / total_area
-            n_words = max(1, round(proportion * len(words)))
-            if i == len(body_regions) - 1:
-                br["en_text"] = " ".join(words[word_idx:])
-            else:
-                br["en_text"] = " ".join(words[word_idx:word_idx + n_words])
-                word_idx += n_words
-    else:
-        for br in body_regions:
-            br["en_text"] = ""
+    art["body_chars_unassigned"] = len(remaining_text)
 
     # ── Bylines: leave blank (hide Hindi, don't show garbage) ──
     for bl in byline_regions:
