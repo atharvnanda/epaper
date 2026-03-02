@@ -690,6 +690,90 @@ def _build_article_output(articles, page_idx, pw, ph):
 
 
 # =====================================================================
+# 3b. Sample background color from page image for each block
+# =====================================================================
+
+def _sample_block_bg_colors(blocks, pix, pw, ph):
+    """
+    For each text block, sample the background color from the rendered
+    page pixmap by reading pixels just OUTSIDE the block's bbox edges.
+
+    Sampling outside avoids hitting rendered text/graphics inside the block.
+    We sample several points along each edge, slightly outward, and pick
+    the most common color.
+
+    Adds a 'bg_color' key (hex string like '#ffffff') to each block.
+    """
+    img_w = pix.width
+    img_h = pix.height
+    scale_x = img_w / pw
+    scale_y = img_h / ph
+    samples_raw = pix.samples  # raw bytes: R G B R G B ...
+    n_comp = pix.n  # number of components per pixel (3 for RGB)
+
+    def _get_pixel(px, py):
+        """Read pixel (r,g,b) from raw samples buffer."""
+        px = max(0, min(px, img_w - 1))
+        py = max(0, min(py, img_h - 1))
+        offset = (py * img_w + px) * n_comp
+        return (samples_raw[offset], samples_raw[offset + 1], samples_raw[offset + 2])
+
+    for blk in blocks:
+        # Convert PDF coords to pixel coords
+        bx0 = int(blk["x0"] * scale_x)
+        by0 = int(blk["y0"] * scale_y)
+        bx1 = int(blk["x1"] * scale_x)
+        by1 = int(blk["y1"] * scale_y)
+
+        # Clamp
+        bx0 = max(0, min(bx0, img_w - 1))
+        by0 = max(0, min(by0, img_h - 1))
+        bx1 = max(0, min(bx1, img_w - 1))
+        by1 = max(0, min(by1, img_h - 1))
+
+        bw = bx1 - bx0
+        bh = by1 - by0
+        outset = 4  # pixels outside the bbox to sample
+
+        # Build sample points OUTSIDE the block edges
+        pts = []
+
+        # Above the block (several points along top edge, outset pixels up)
+        top_y = max(0, by0 - outset)
+        for frac in (0.2, 0.4, 0.6, 0.8):
+            pts.append((bx0 + int(bw * frac), top_y))
+
+        # Below the block
+        bot_y = min(img_h - 1, by1 + outset)
+        for frac in (0.2, 0.4, 0.6, 0.8):
+            pts.append((bx0 + int(bw * frac), bot_y))
+
+        # Left of the block
+        left_x = max(0, bx0 - outset)
+        for frac in (0.3, 0.5, 0.7):
+            pts.append((left_x, by0 + int(bh * frac)))
+
+        # Right of the block
+        right_x = min(img_w - 1, bx1 + outset)
+        for frac in (0.3, 0.5, 0.7):
+            pts.append((right_x, by0 + int(bh * frac)))
+
+        # Collect sampled colors, quantize to reduce JPEG noise
+        color_counts = {}
+        for spx, spy in pts:
+            r, g, b = _get_pixel(spx, spy)
+            qr = (r // 8) * 8
+            qg = (g // 8) * 8
+            qb = (b // 8) * 8
+            key = (qr, qg, qb)
+            color_counts[key] = color_counts.get(key, 0) + 1
+
+        # Pick the most common (likely the background, not stray edges)
+        best = max(color_counts, key=color_counts.get)
+        blk["bg_color"] = f"#{best[0]:02x}{best[1]:02x}{best[2]:02x}"
+
+
+# =====================================================================
 # 4.  Main entry point
 # =====================================================================
 
@@ -738,6 +822,10 @@ def parse_pdf(pdf_path: str, date_str: str | None = None, dpi: int = 200):
             # 4. Text blocks with font metadata
             blocks = _extract_dict_blocks(page, page_idx, pw, ph)
             print(f"  Text blocks: {len(blocks)}")
+
+            # 4b. Sample background colors for each block from the pixmap
+            _sample_block_bg_colors(blocks, pix, pw, ph)
+            print(f"  BG colors sampled")
 
             # 5. Assign blocks to articles
             raw_articles = _assign_blocks_to_articles(

@@ -4,12 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Aaj Tak Epaper - English Edition - {{ date }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
       background: #1a1a2e;
-      font-family: Georgia, 'Times New Roman', serif;
+      font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif;
       color: #1a1a1a;
     }
 
@@ -47,7 +50,7 @@
       border-radius: 20px;
       cursor: pointer;
       font-size: 13px;
-      font-family: Arial, sans-serif;
+      font-family: 'Inter', Arial, sans-serif;
       transition: all 0.2s;
       backdrop-filter: blur(6px);
     }
@@ -81,65 +84,71 @@
       height: auto;
     }
 
-    /* -- Text block overlays (per-block, not per-article) -- */
+    /* ============================================
+       TEXT BLOCK OVERLAYS -- SOLID, OPAQUE, FIXED
+       ============================================ */
     .text-block {
       position: absolute;
       overflow: hidden;
-      padding: 2px 4px;
+      padding: 3px 5px;
       box-sizing: border-box;
       transition: opacity 0.25s ease;
       word-break: break-word;
       hyphens: auto;
     }
 
-    /* Role-specific styling */
+    /* --- HEADLINE: large bold serif --- */
     .text-block.role-headline {
-      background: rgba(255, 253, 248, 0.97);
-      font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+      font-family: 'Playfair Display', 'Georgia', serif;
       font-weight: 900;
-      letter-spacing: 0.01em;
+      font-size: 22px;
+      letter-spacing: -0.01em;
       color: #111;
-      line-height: 1.1;
+      line-height: 1.12;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       text-align: left;
     }
 
+    /* --- SUBHEADLINE: medium bold sans --- */
     .text-block.role-subheadline {
-      background: rgba(255, 253, 248, 0.96);
-      font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+      font-family: 'Inter', Arial, sans-serif;
       font-weight: 700;
+      font-size: 13px;
       color: #c0392b;
-      line-height: 1.15;
+      line-height: 1.2;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
     }
 
+    /* --- BODY: clean readable serif --- */
     .text-block.role-body {
-      background: rgba(255, 253, 248, 0.96);
-      font-family: Georgia, 'Times New Roman', serif;
+      font-family: 'Source Serif 4', Georgia, serif;
       font-weight: 400;
+      font-size: 10.5px;
       color: #222;
-      line-height: 1.38;
-      text-align: justify;
+      line-height: 1.4;
+      text-align: left;
     }
 
+    /* --- BYLINE: small italic sans --- */
     .text-block.role-byline {
-      background: rgba(255, 253, 248, 0.90);
-      font-family: Arial, sans-serif;
+      font-family: 'Inter', Arial, sans-serif;
       font-weight: 600;
+      font-size: 10px;
+      font-style: italic;
+      color: #c0392b;
+      line-height: 1.25;
+    }
+
+    /* --- CAPTION: small sans --- */
+    .text-block.role-caption {
+      font-family: 'Inter', Arial, sans-serif;
+      font-weight: 400;
+      font-size: 9px;
       font-style: italic;
       color: #555;
       line-height: 1.2;
-    }
-
-    .text-block.role-caption {
-      background: rgba(255, 253, 248, 0.93);
-      font-family: Arial, sans-serif;
-      font-weight: 400;
-      font-style: italic;
-      color: #444;
-      line-height: 1.25;
     }
 
     .overlays-hidden .text-block {
@@ -180,7 +189,7 @@
       border-radius: 24px;
       font-size: 14px;
       z-index: 50;
-      font-family: Arial, sans-serif;
+      font-family: 'Inter', Arial, sans-serif;
       backdrop-filter: blur(6px);
     }
 
@@ -196,7 +205,7 @@
       position: fixed; bottom: 60px; left: 50%;
       transform: translateX(-50%);
       color: rgba(255,255,255,0.6);
-      font-size: 13px; font-family: Arial, sans-serif; z-index: 50;
+      font-size: 13px; font-family: 'Inter', Arial, sans-serif; z-index: 50;
     }
 
     @media (max-width: 1200px) {
@@ -228,11 +237,9 @@
                  style="top: {{ '%.3f'|format(blk.top_pct) }}%;
                         left: {{ '%.3f'|format(blk.left_pct) }}%;
                         width: {{ '%.3f'|format(blk.width_pct) }}%;
-                        height: {{ '%.3f'|format(blk.height_pct) }}%;"
-                 data-text="{{ blk.en_text|e }}"
-                 data-role="{{ blk.role }}"
-                 data-font-size="{{ blk.font_size }}"
-                 data-max-font="{{ blk.max_font_size }}">
+                        height: {{ '%.3f'|format(blk.height_pct) }}%;
+                        background: {{ blk.bg_color }};">
+              {{ blk.en_text }}
             </div>
             {% endif %}
           {% endfor %}
@@ -269,7 +276,6 @@
       slides.forEach((s, i) => s.classList.toggle('active', i === currentPage));
       dots.forEach((d, i) => d.classList.toggle('active', i === currentPage));
       pageLabel.textContent = `Page ${currentPage + 1} of ${totalPages}`;
-      requestAnimationFrame(() => fillOverlays(slides[currentPage]));
     }
 
     document.addEventListener('keydown', (e) => {
@@ -286,83 +292,6 @@
       document.querySelector('.toggle-btn').textContent =
         overlaysVisible ? 'Hide Overlays' : 'Show Overlays';
     }
-
-    /* -- Auto-fit text into a block-level overlay -- */
-    function autoFitText(el) {
-      const text = (el.dataset.text || '').trim();
-      if (!text) return false;
-
-      const boxW = el.offsetWidth;
-      const boxH = el.offsetHeight;
-      if (boxW < 5 || boxH < 5) return false;
-
-      const role = el.dataset.role;
-      const pdfFontSize = parseFloat(el.dataset.maxFont) || 15;
-
-      // Compute starting English font size from PDF font metadata
-      let fontSize;
-      if (role === 'headline') {
-        fontSize = Math.min(pdfFontSize * 0.55, boxH * 0.85, 40);
-        fontSize = Math.max(fontSize, 14);
-      } else if (role === 'subheadline') {
-        fontSize = Math.min(pdfFontSize * 0.50, boxH * 0.7, 24);
-        fontSize = Math.max(fontSize, 10);
-      } else if (role === 'byline') {
-        fontSize = Math.min(pdfFontSize * 0.48, boxH * 0.8, 14);
-        fontSize = Math.max(fontSize, 8);
-      } else if (role === 'caption') {
-        fontSize = Math.min(pdfFontSize * 0.48, boxH * 0.75, 13);
-        fontSize = Math.max(fontSize, 7.5);
-      } else {
-        // body
-        fontSize = Math.min(pdfFontSize * 0.52, boxH * 0.18, 15);
-        fontSize = Math.max(fontSize, 8);
-      }
-
-      el.style.fontSize = fontSize + 'px';
-      el.textContent = text;
-
-      // Shrink to fit
-      const maxTries = (role === 'body') ? 5 : 20;
-      const shrinkFactor = (role === 'body') ? 0.95 : 0.92;
-      const minFont = (role === 'body') ? 7.5 : 6;
-      let tries = 0;
-      while (el.scrollHeight > boxH + 2 && fontSize > minFont && tries < maxTries) {
-        fontSize *= shrinkFactor;
-        el.style.fontSize = fontSize + 'px';
-        tries++;
-      }
-
-      // If still overflowing, use CSS truncation
-      if (el.scrollHeight > boxH + 2) {
-        el.style.overflow = 'hidden';
-        el.style.textOverflow = 'ellipsis';
-        el.style.display = '-webkit-box';
-        el.style.webkitLineClamp = Math.max(1, Math.floor(boxH / (fontSize * 1.4)));
-        el.style.webkitBoxOrient = 'vertical';
-      }
-
-      return true;
-    }
-
-    function fillOverlays(slideEl) {
-      if (!slideEl) return;
-      slideEl.querySelectorAll('.text-block').forEach(el => {
-        if (el.dataset.filled) return;
-        if (autoFitText(el)) {
-          el.dataset.filled = '1';
-        }
-      });
-    }
-
-    // Fill first page + handle lazy image loads
-    fillOverlays(slides[0]);
-    document.querySelectorAll('.page-container img').forEach(img => {
-      if (img.complete) return;
-      img.addEventListener('load', () => {
-        fillOverlays(img.closest('.page-slide'));
-      });
-    });
   </script>
 </body>
 </html>

@@ -38,7 +38,7 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for article in page.get("articles", []):
             render_blocks = []
             for blk in article.get("blocks", []):
-                text_en = (blk.get("text_en") or blk.get("text", "")).strip()
+                text_en = (blk.get("text_en") or "").strip()
                 if not text_en:
                     continue
 
@@ -48,8 +48,7 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "width_pct": blk["width_pct"],
                     "height_pct": blk["height_pct"],
                     "role": blk.get("role", "body"),
-                    "font_size": blk.get("font_size", 15),
-                    "max_font_size": blk.get("max_font_size", 15),
+                    "bg_color": blk.get("bg_color", "#ffffff"),
                     "en_text": text_en,
                 })
 
