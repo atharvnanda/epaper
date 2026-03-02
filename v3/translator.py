@@ -1,0 +1,261 @@
+"""
+v3 translator -- role-aware block-level Hindi -> English translation.
+
+Reads  data/{date}/pdf_blocks.json   (output of v3/pdf_parser.py)
+Writes data/{date}/articles_translated.json
+
+Strategy (Approach B):
+  For each article, build a keyed dict like:
+    { "headline_0": "...", "body_0": "...", "body_1": "...", ... }
+  Send to LLM with a structured prompt asking it to return JSON with
+  the same keys translated. Then map each translation back to its
+  original block by key.
+
+This ensures:
+  - Headlines stay headline-length (short, punchy)
+  - Body text stays body-length
+  - No mixing between blocks
+  - 1:1 mapping for rendering
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import time
+from pathlib import Path
+from typing import Any
+
+from dotenv import load_dotenv
+from openai import OpenAI
+
+DATA_DIR = "data"
+
+SYSTEM_PROMPT = """\
+You are a professional Hindi-to-English newspaper translator.
+
+You will receive a JSON object where each key is a labeled text block
+from a Hindi newspaper article (e.g. "headline_0", "body_0", "body_1").
+
+Translate each value into polished, editorially fluent English.
+
+Rules:
+- Return ONLY a valid JSON object with the EXACT same keys.
+- headline translations should be concise and impactful (newspaper headline style).
+- subheadline translations should be brief (1-2 lines).
+- body translations should be natural English paragraphs.
+- byline: just translate the location/author, keep it short.
+- caption: brief descriptive text.
+- Keep proper nouns, names, places as-is.
+- If you see "आजतक", translate it as "Aaj Tak".
+- Do NOT add any explanation, markdown, or extra text outside the JSON.
+- DO NOT RETURN HINDI TEXT AT ANY COST. ALSO ONLY RETURN RELEVANT TEXT, DONT CONVERSEE WITH THE USER OR APOLOGIZE FOR MISTAKES
+"""
+
+# Articles shorter than this total chars are kept untranslated
+MIN_TRANSLATE_CHARS = 15
+
+
+def _make_client() -> OpenAI | None:
+    """Create Groq-compatible OpenAI client, or None if no API key."""
+    load_dotenv()
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        print("  WARN: GROQ_API_KEY not set -- text_en will copy text_hi.")
+        return None
+    return OpenAI(
+        api_key=api_key,
+        base_url="https://api.groq.com/openai/v1",
+    )
+
+
+def _build_keyed_dict(blocks: list[dict]) -> dict[str, str]:
+    """
+    Build a role-indexed dict from an article's blocks.
+
+    Example output:
+      {"headline_0": "...", "subheadline_0": "...",
+       "body_0": "...", "body_1": "...", "byline_0": "..."}
+    """
+    role_counters: dict[str, int] = {}
+    keyed: dict[str, str] = {}
+
+    for blk in blocks:
+        role = blk.get("role", "body")
+        idx = role_counters.get(role, 0)
+        role_counters[role] = idx + 1
+        key = f"{role}_{idx}"
+        keyed[key] = blk.get("text", "").strip()
+
+    return keyed
+
+
+def _parse_json_response(raw: str) -> dict[str, str] | None:
+    """Try to parse a JSON dict from the LLM response, tolerating markdown fences."""
+    text = raw.strip()
+
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        # Remove opening fence (```json or ```)
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        # Remove closing fence
+        text = re.sub(r"\n?```\s*$", "", text)
+        text = text.strip()
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # Try to find JSON object in the text
+    match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL)
+    if match:
+        try:
+            parsed = json.loads(match.group())
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    return None
+
+
+def _translate_article_keyed(
+    client: OpenAI | None,
+    keyed_dict: dict[str, str],
+    retries: int = 3,
+) -> dict[str, str]:
+    """
+    Translate a keyed dict of blocks via LLM.
+    Returns a dict with same keys but English values.
+    Falls back to Hindi text on failure.
+    """
+    if client is None:
+        return keyed_dict  # fallback
+
+    user_msg = json.dumps(keyed_dict, ensure_ascii=False, indent=2)
+
+    for attempt in range(1, retries + 1):
+        try:
+            resp = client.chat.completions.create(
+                model="meta-llama/llama-4-maverick-17b-128e-instruct",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_msg},
+                ],
+                temperature=0.15,
+                max_tokens=4096,
+            )
+            raw = (resp.choices[0].message.content or "").strip()
+            parsed = _parse_json_response(raw)
+
+            if parsed is not None:
+                # Ensure all keys exist (fill missing with Hindi fallback)
+                result = {}
+                for k in keyed_dict:
+                    result[k] = parsed.get(k, keyed_dict[k])
+                return result
+            else:
+                print(f"    WARN: could not parse JSON from LLM (attempt {attempt})")
+                if attempt == retries:
+                    return keyed_dict
+
+        except Exception as exc:
+            print(f"    translate error (attempt {attempt}): {exc}")
+            if attempt < retries:
+                time.sleep(1.5 * attempt)
+
+    return keyed_dict  # fallback after all retries
+
+
+def translate_articles(date_str: str) -> dict[str, Any]:
+    """
+    Read pdf_blocks.json, translate each article block-by-block,
+    write articles_translated.json.
+
+    Each block gets its own text_en field (1:1 mapping).
+    """
+    in_json = os.path.join(DATA_DIR, date_str, "pdf_blocks.json")
+    out_json = os.path.join(DATA_DIR, date_str, "articles_translated.json")
+
+    if not os.path.exists(in_json):
+        raise FileNotFoundError(f"Input not found: {in_json}")
+
+    with open(in_json, "r", encoding="utf-8") as f:
+        src = json.load(f)
+
+    client = _make_client()
+
+    pages_out: list[dict[str, Any]] = []
+    translated_count = 0
+    skipped_count = 0
+
+    for page in src.get("pages", []):
+        articles_out: list[dict[str, Any]] = []
+
+        for article in page.get("articles", []):
+            blocks = article.get("blocks", [])
+            total_text = "".join(b.get("text", "") for b in blocks)
+
+            if len(total_text.strip()) < MIN_TRANSLATE_CHARS:
+                # Short article -- keep Hindi text as-is per block
+                for blk in blocks:
+                    blk["text_en"] = blk.get("text", "")
+                skipped_count += 1
+            else:
+                # Build keyed dict and translate
+                keyed_hi = _build_keyed_dict(blocks)
+                keyed_en = _translate_article_keyed(client, keyed_hi)
+                translated_count += 1
+
+                # Map translations back to blocks
+                role_counters: dict[str, int] = {}
+                for blk in blocks:
+                    role = blk.get("role", "body")
+                    idx = role_counters.get(role, 0)
+                    role_counters[role] = idx + 1
+                    key = f"{role}_{idx}"
+                    blk["text_en"] = keyed_en.get(key, blk.get("text", ""))
+
+            articles_out.append({
+                "article_id": article["article_id"],
+                "source": article.get("source", ""),
+                "top_pct": article["top_pct"],
+                "left_pct": article["left_pct"],
+                "width_pct": article["width_pct"],
+                "height_pct": article["height_pct"],
+                "block_count": article["block_count"],
+                "text": article.get("text", ""),
+                "blocks": blocks,
+            })
+
+        pages_out.append({
+            "page_num": page["page_num"],
+            "page_w": page["page_w"],
+            "page_h": page["page_h"],
+            "image": page["image"],
+            "articles": articles_out,
+        })
+
+    result = {
+        "date": date_str,
+        "source": str(Path(in_json).resolve()),
+        "pages": pages_out,
+    }
+
+    os.makedirs(os.path.dirname(out_json), exist_ok=True)
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+
+    print(f"  Translated {translated_count} articles, skipped {skipped_count}")
+    print(f"  Saved: {out_json}")
+    return result
+
+
+if __name__ == "__main__":
+    import sys
+    date = sys.argv[1] if len(sys.argv) > 1 else "2026-03-02"
+    translate_articles(date)
