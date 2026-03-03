@@ -63,6 +63,24 @@ def _is_short_symbol(text: str) -> bool:
     return False
 
 
+def _is_all_english(text: str) -> bool:
+    """
+    Return True if the original (Hindi) text is already entirely in
+    English / Latin script (ASCII letters, digits, punctuation, spaces).
+
+    When the original PDF text is already English there is no need to
+    overlay a translation — the underlying page image already shows the
+    correct text.  Skipping these blocks avoids covering elements like
+    PAGE-07, PAGE-12, www.aajtak.in, etc. with an unnecessary overlay
+    that may not fit the exact visual style.
+    """
+    # Allow: basic Latin (ASCII), common punctuation, whitespace
+    for ch in text:
+        if ord(ch) > 255:          # anything above Latin-1 → not pure English
+            return False
+    return True
+
+
 def _merge_adjacent_blocks(
     blocks: list[dict[str, Any]],
     merge_roles: set[str] = frozenset({"body", "subheadline"}),
@@ -346,6 +364,13 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
                 # Skip pure bullet/symbol blocks
                 if _is_short_symbol(text_en):
+                    continue
+
+                # Skip blocks whose original text is already entirely
+                # English — the page image already shows them correctly
+                # (e.g. PAGE-07, www.aajtak.in, logos, English captions).
+                original_text = (blk.get("text") or "").strip()
+                if original_text and _is_all_english(original_text):
                     continue
 
                 # Demote red-colored headlines to subheadline.
