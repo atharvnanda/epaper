@@ -57,7 +57,7 @@ def _is_short_symbol(text: str) -> bool:
     if len(stripped) <= 2:
         return True
     # Also skip if it's ONLY quote characters (curly/straight quotes)
-    quote_chars = set('"""\u201c\u201d\u2018\u2019\u201e\u201a«»\u2039\u203a\'')
+    quote_chars = set('"""\u201c\u201d\u2018\u2019\u201e\u201a\xab\xbb\u2039\u203a\'')
     if all(c in quote_chars for c in stripped):
         return True
     return False
@@ -68,27 +68,151 @@ def _merge_adjacent_blocks(
     merge_roles: set[str] = frozenset({"body", "subheadline"}),
 ) -> list[dict[str, Any]]:
     """
-    Merge adjacent same-role blocks in the same column into single
-    tall blocks with concatenated text.
+    Merge adjacent same-role blocks into single blocks with concatenated text.
 
-    The PDF parser extracts each LINE as a separate block (~1.13% height).
-    English text is often longer than Hindi, so one-line boxes overflow.
-    By merging lines in the same column, text can reflow naturally.
+    Two kinds of merging are performed:
 
-    Only blocks whose role is in `merge_roles` are merged.
-    Blocks of different roles are never merged together.
-    Blocks with different bg_color are never merged together.
+    A) HORIZONTAL merge (headlines and subheadlines only):
+       Headline/subheadline blocks at the same vertical position (top_pct
+       within 0.3%) that are horizontally adjacent (gap < 5%) are merged --
+       but ONLY if the combined span exceeds 40% of page width.  This
+       catches headlines the PDF parser split into two text spans, while
+       avoiding merging separate columns of body text.
 
-    Gap thresholds differ by role:
-      - body: 1.5% (generous — body text flows continuously)
-      - subheadline: 0.5% (tight — preserves bullet-point group boundaries)
+    B) VERTICAL merge (same column):
+       Same-column blocks are merged vertically, only for roles in
+       `merge_roles` (body, subheadline).
+       Gap thresholds differ by role:
+         - body: 1.5% (generous -- body text flows continuously)
+         - subheadline: 0.5% (tight -- preserves bullet-point group boundaries)
 
     Strategy:
-      1. Separate mergeable blocks by role.
-      2. For each role, group blocks by column (left_pct proximity).
-      3. Within each column group, merge vertically adjacent blocks
-         only if they share the same bg_color and gap is below threshold.
-      4. Reassemble all blocks sorted by position.
+      1. Horizontal merge first (headlines/subheadlines with span check).
+      2. Then vertical merge for body/subheadline roles.
+    """
+    if not blocks:
+        return blocks
+
+    # -- Step 1: Horizontal merge (same row, adjacent horizontally) --
+    blocks = _merge_horizontal(blocks)
+
+    # -- Step 2: Vertical merge (same column, adjacent vertically) --
+    blocks = _merge_vertical(blocks, merge_roles)
+
+    return blocks
+
+
+def _merge_horizontal(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Merge blocks that sit at the same vertical position and are
+    horizontally adjacent into wider blocks.
+
+    CONSERVATIVE approach: only merge headline and subheadline blocks that,
+    when combined, span a large portion of the page width (> 40%).  This
+    catches headlines the PDF parser split into multiple spans while avoiding
+    merging separate columns of body text that happen to sit at the same
+    y-position.
+
+    Body blocks are NOT merged horizontally -- they are handled by vertical
+    merging instead, which is column-aware.
+    """
+    if not blocks:
+        return blocks
+
+    TOP_TOLERANCE = 0.3   # % -- blocks within this are "same row"
+    H_GAP_MAX = 5.0       # % -- max horizontal gap to merge across
+    MIN_SPAN_PCT = 40.0   # % -- merged result must span at least this wide
+    MERGE_H_ROLES = {"headline", "subheadline"}
+
+    # Only attempt horizontal merge on headline/subheadline blocks
+    to_merge = [b for b in blocks if b.get("role") in MERGE_H_ROLES]
+    others = [b for b in blocks if b.get("role") not in MERGE_H_ROLES]
+
+    if not to_merge:
+        return blocks
+
+    # Sort by top_pct first, then left_pct
+    sorted_hl = sorted(to_merge, key=lambda b: (b["top_pct"], b["left_pct"]))
+
+    # Group into rows by top_pct proximity
+    rows: list[list[dict[str, Any]]] = []
+    current_row: list[dict[str, Any]] = [sorted_hl[0]]
+
+    for blk in sorted_hl[1:]:
+        if abs(blk["top_pct"] - current_row[0]["top_pct"]) <= TOP_TOLERANCE:
+            current_row.append(blk)
+        else:
+            rows.append(current_row)
+            current_row = [blk]
+    rows.append(current_row)
+
+    result: list[dict[str, Any]] = []
+
+    for row in rows:
+        if len(row) == 1:
+            result.append(row[0])
+            continue
+
+        # Sort by left_pct within the row
+        row.sort(key=lambda b: b["left_pct"])
+
+        # Try to merge consecutive blocks with same role + bg_color + small gap,
+        # but only keep the merge if the result is wide enough (span check).
+        merged_group: list[dict[str, Any]] = [row[0]]
+
+        for blk in row[1:]:
+            last = merged_group[-1]
+            last_right = last["left_pct"] + last["width_pct"]
+            gap = blk["left_pct"] - last_right
+
+            same_bg = blk.get("bg_color", "") == last.get("bg_color", "")
+            same_role = blk.get("role") == last.get("role")
+
+            # Check if merging would produce a wide-enough span
+            new_left = min(last["left_pct"], blk["left_pct"])
+            new_right = max(last_right, blk["left_pct"] + blk["width_pct"])
+            merged_span = new_right - new_left
+
+            if same_role and same_bg and -0.5 <= gap <= H_GAP_MAX and merged_span >= MIN_SPAN_PCT:
+                # Merge: extend the last block to cover both
+                new_top = min(last["top_pct"], blk["top_pct"])
+                new_bottom = max(
+                    last["top_pct"] + last["height_pct"],
+                    blk["top_pct"] + blk["height_pct"],
+                )
+
+                last_text = last.get("en_text", "").strip()
+                blk_text = blk.get("en_text", "").strip()
+                combined_text = f"{last_text} {blk_text}".strip()
+
+                merged_group[-1] = {
+                    "top_pct": new_top,
+                    "left_pct": new_left,
+                    "width_pct": new_right - new_left,
+                    "height_pct": new_bottom - new_top,
+                    "role": last.get("role", "headline"),
+                    "bg_color": last.get("bg_color", "#ffffff"),
+                    "text_color": last.get("text_color", "#000000"),
+                    "en_text": combined_text,
+                }
+            else:
+                merged_group.append(blk)
+
+        result.extend(merged_group)
+
+    # Combine with non-headline/subheadline blocks
+    result.extend(others)
+    result.sort(key=lambda b: (b["top_pct"], b["left_pct"]))
+    return result
+
+
+def _merge_vertical(
+    blocks: list[dict[str, Any]],
+    merge_roles: set[str] = frozenset({"body", "subheadline"}),
+) -> list[dict[str, Any]]:
+    """
+    Merge vertically adjacent same-role blocks in the same column.
+    Only merges roles in `merge_roles`.
     """
     if not blocks:
         return blocks
@@ -208,7 +332,7 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     h_px = blk.get("height_pct", 0)
                     w_px = blk.get("width_pct", 0)
                     # If the block is very tall & wide, it's a quote/paragraph block
-                    if h_px * w_px > 300:   # rough area threshold in pct²
+                    if h_px * w_px > 300:   # rough area threshold in pct squared
                         large_subheadline_texts.add(
                             (blk.get("text_en") or blk.get("text") or "").strip()
                         )
