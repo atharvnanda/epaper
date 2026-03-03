@@ -227,7 +227,7 @@
     {% for page in pages %}
     <div class="page-slide{% if loop.first %} active{% endif %}" id="page-{{ page.page_num }}">
       <div class="page-container">
-        <img src="images/page_{{ page.page_num }}.jpg" alt="Page {{ page.page_num }}">
+        <img src="{{ page.image_src }}" alt="Page {{ page.page_num }}">
 
         {# Per-block overlays: only text gets covered, images stay visible #}
         {% for art in page.articles %}
