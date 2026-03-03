@@ -63,99 +63,120 @@ def _is_short_symbol(text: str) -> bool:
     return False
 
 
-def _merge_body_blocks(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _merge_adjacent_blocks(
+    blocks: list[dict[str, Any]],
+    merge_roles: set[str] = frozenset({"body", "subheadline"}),
+) -> list[dict[str, Any]]:
     """
-    Merge body-role blocks that belong to the same column into single
+    Merge adjacent same-role blocks in the same column into single
     tall blocks with concatenated text.
 
     The PDF parser extracts each LINE as a separate block (~1.13% height).
     English text is often longer than Hindi, so one-line boxes overflow.
-    By merging all body lines in the same column region, the text can
-    reflow naturally within a larger block.
+    By merging lines in the same column, text can reflow naturally.
+
+    Only blocks whose role is in `merge_roles` are merged.
+    Blocks of different roles are never merged together.
+    Blocks with different bg_color are never merged together.
+
+    Gap thresholds differ by role:
+      - body: 1.5% (generous — body text flows continuously)
+      - subheadline: 0.5% (tight — preserves bullet-point group boundaries)
 
     Strategy:
-      1. Separate body blocks from non-body blocks (preserve order).
-      2. Group body blocks by column (using left_pct proximity).
-      3. Within each column group, sort by top_pct and merge vertically
-         adjacent blocks into one tall block.
-      4. Reassemble all blocks sorted by top_pct.
+      1. Separate mergeable blocks by role.
+      2. For each role, group blocks by column (left_pct proximity).
+      3. Within each column group, merge vertically adjacent blocks
+         only if they share the same bg_color and gap is below threshold.
+      4. Reassemble all blocks sorted by position.
     """
     if not blocks:
         return blocks
 
-    # Separate body and non-body blocks
-    non_body: list[dict[str, Any]] = []
-    body_blocks: list[dict[str, Any]] = []
-    for blk in blocks:
-        if blk.get("role", "body") == "body":
-            body_blocks.append(blk)
-        else:
-            non_body.append(blk)
+    GAP_THRESHOLDS = {
+        "body": 1.5,
+        "subheadline": 0.5,
+    }
 
-    if not body_blocks:
+    # Separate into mergeable (per-role) and non-mergeable
+    keep: list[dict[str, Any]] = []
+    by_role: dict[str, list[dict[str, Any]]] = {}
+    for blk in blocks:
+        role = blk.get("role", "body")
+        if role in merge_roles:
+            by_role.setdefault(role, []).append(blk)
+        else:
+            keep.append(blk)
+
+    if not by_role:
         return blocks
 
-    # Group body blocks by column using left_pct proximity
-    # Two blocks are in the same column if their left edges are within 5%
-    body_blocks.sort(key=lambda b: (b["left_pct"], b["top_pct"]))
-    columns: list[list[dict[str, Any]]] = []
-    for blk in body_blocks:
-        placed = False
+    merged_all: list[dict[str, Any]] = list(keep)
+
+    for role, role_blocks in by_role.items():
+        max_gap = GAP_THRESHOLDS.get(role, 1.5)
+
+        # Group by column using left_pct proximity
+        role_blocks.sort(key=lambda b: (b["left_pct"], b["top_pct"]))
+        columns: list[list[dict[str, Any]]] = []
+        for blk in role_blocks:
+            placed = False
+            for col in columns:
+                ref_left = col[0]["left_pct"]
+                if abs(blk["left_pct"] - ref_left) < 5.0:
+                    col.append(blk)
+                    placed = True
+                    break
+            if not placed:
+                columns.append([blk])
+
+        # Within each column, merge vertically adjacent blocks
         for col in columns:
-            ref_left = col[0]["left_pct"]
-            if abs(blk["left_pct"] - ref_left) < 5.0:
-                col.append(blk)
-                placed = True
-                break
-        if not placed:
-            columns.append([blk])
+            col.sort(key=lambda b: b["top_pct"])
+            groups: list[list[dict[str, Any]]] = []
+            current_group: list[dict[str, Any]] = [col[0]]
 
-    # Within each column, sort by top_pct and merge adjacent blocks
-    merged_body: list[dict[str, Any]] = []
-    for col in columns:
-        col.sort(key=lambda b: b["top_pct"])
-        groups: list[list[dict[str, Any]]] = []
-        current_group: list[dict[str, Any]] = [col[0]]
+            for blk in col[1:]:
+                last = current_group[-1]
+                last_bottom = last["top_pct"] + last["height_pct"]
+                gap = blk["top_pct"] - last_bottom
 
-        for blk in col[1:]:
-            last = current_group[-1]
-            last_bottom = last["top_pct"] + last["height_pct"]
-            gap = blk["top_pct"] - last_bottom
-            if gap < 1.5:  # allow small gaps between lines
-                current_group.append(blk)
-            else:
-                groups.append(current_group)
-                current_group = [blk]
-        groups.append(current_group)
+                # Break group if: big gap or different bg_color
+                same_bg = blk.get("bg_color", "") == last.get("bg_color", "")
 
-        for grp in groups:
-            if len(grp) == 1:
-                merged_body.append(grp[0])
-                continue
+                if gap < max_gap and same_bg:
+                    current_group.append(blk)
+                else:
+                    groups.append(current_group)
+                    current_group = [blk]
+            groups.append(current_group)
 
-            top = min(b["top_pct"] for b in grp)
-            left = min(b["left_pct"] for b in grp)
-            bottom = max(b["top_pct"] + b["height_pct"] for b in grp)
-            right = max(b["left_pct"] + b["width_pct"] for b in grp)
+            for grp in groups:
+                if len(grp) == 1:
+                    merged_all.append(grp[0])
+                    continue
 
-            texts = [b.get("en_text", "") for b in grp]
-            combined_text = " ".join(t.strip() for t in texts if t.strip())
+                top = min(b["top_pct"] for b in grp)
+                left = min(b["left_pct"] for b in grp)
+                bottom = max(b["top_pct"] + b["height_pct"] for b in grp)
+                right = max(b["left_pct"] + b["width_pct"] for b in grp)
 
-            merged_body.append({
-                "top_pct": top,
-                "left_pct": left,
-                "width_pct": right - left,
-                "height_pct": bottom - top,
-                "role": "body",
-                "bg_color": grp[0].get("bg_color", "#ffffff"),
-                "text_color": grp[0].get("text_color", "#000000"),
-                "en_text": combined_text,
-            })
+                texts = [b.get("en_text", "") for b in grp]
+                combined = " ".join(t.strip() for t in texts if t.strip())
 
-    # Combine non-body + merged body, sort by position
-    result = non_body + merged_body
-    result.sort(key=lambda b: (b["top_pct"], b["left_pct"]))
-    return result
+                merged_all.append({
+                    "top_pct": top,
+                    "left_pct": left,
+                    "width_pct": right - left,
+                    "height_pct": bottom - top,
+                    "role": role,
+                    "bg_color": grp[0].get("bg_color", "#ffffff"),
+                    "text_color": grp[0].get("text_color", "#000000"),
+                    "en_text": combined,
+                })
+
+    merged_all.sort(key=lambda b: (b["top_pct"], b["left_pct"]))
+    return merged_all
 
 
 def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -249,9 +270,8 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "en_text": text_en,
                 })
 
-            # Merge consecutive body blocks in the same column
-            # into larger blocks so text has room to flow.
-            merged_render_blocks = _merge_body_blocks(render_blocks)
+            # Merge consecutive same-role blocks in the same column.
+            merged_render_blocks = _merge_adjacent_blocks(render_blocks)
             article["render_blocks"] = merged_render_blocks
 
     return pages
