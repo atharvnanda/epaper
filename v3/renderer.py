@@ -50,10 +50,112 @@ def _embed_image(image_path: str) -> str:
 def _is_short_symbol(text: str) -> bool:
     """
     Return True if the text is just a bullet/symbol/single char
-    that shouldn't be rendered as a full overlay (e.g. 'l', '•', '»').
+    that shouldn't be rendered as a full overlay.
+    Catches: single 'l' (Wingdings bullets), quote marks, bullets, etc.
     """
     stripped = text.strip()
-    return len(stripped) <= 2
+    if len(stripped) <= 2:
+        return True
+    # Also skip if it's ONLY quote characters (curly/straight quotes)
+    quote_chars = set('"""\u201c\u201d\u2018\u2019\u201e\u201a«»\u2039\u203a\'')
+    if all(c in quote_chars for c in stripped):
+        return True
+    return False
+
+
+def _merge_body_blocks(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Merge body-role blocks that belong to the same column into single
+    tall blocks with concatenated text.
+
+    The PDF parser extracts each LINE as a separate block (~1.13% height).
+    English text is often longer than Hindi, so one-line boxes overflow.
+    By merging all body lines in the same column region, the text can
+    reflow naturally within a larger block.
+
+    Strategy:
+      1. Separate body blocks from non-body blocks (preserve order).
+      2. Group body blocks by column (using left_pct proximity).
+      3. Within each column group, sort by top_pct and merge vertically
+         adjacent blocks into one tall block.
+      4. Reassemble all blocks sorted by top_pct.
+    """
+    if not blocks:
+        return blocks
+
+    # Separate body and non-body blocks
+    non_body: list[dict[str, Any]] = []
+    body_blocks: list[dict[str, Any]] = []
+    for blk in blocks:
+        if blk.get("role", "body") == "body":
+            body_blocks.append(blk)
+        else:
+            non_body.append(blk)
+
+    if not body_blocks:
+        return blocks
+
+    # Group body blocks by column using left_pct proximity
+    # Two blocks are in the same column if their left edges are within 5%
+    body_blocks.sort(key=lambda b: (b["left_pct"], b["top_pct"]))
+    columns: list[list[dict[str, Any]]] = []
+    for blk in body_blocks:
+        placed = False
+        for col in columns:
+            ref_left = col[0]["left_pct"]
+            if abs(blk["left_pct"] - ref_left) < 5.0:
+                col.append(blk)
+                placed = True
+                break
+        if not placed:
+            columns.append([blk])
+
+    # Within each column, sort by top_pct and merge adjacent blocks
+    merged_body: list[dict[str, Any]] = []
+    for col in columns:
+        col.sort(key=lambda b: b["top_pct"])
+        groups: list[list[dict[str, Any]]] = []
+        current_group: list[dict[str, Any]] = [col[0]]
+
+        for blk in col[1:]:
+            last = current_group[-1]
+            last_bottom = last["top_pct"] + last["height_pct"]
+            gap = blk["top_pct"] - last_bottom
+            if gap < 1.5:  # allow small gaps between lines
+                current_group.append(blk)
+            else:
+                groups.append(current_group)
+                current_group = [blk]
+        groups.append(current_group)
+
+        for grp in groups:
+            if len(grp) == 1:
+                merged_body.append(grp[0])
+                continue
+
+            top = min(b["top_pct"] for b in grp)
+            left = min(b["left_pct"] for b in grp)
+            bottom = max(b["top_pct"] + b["height_pct"] for b in grp)
+            right = max(b["left_pct"] + b["width_pct"] for b in grp)
+
+            texts = [b.get("en_text", "") for b in grp]
+            combined_text = " ".join(t.strip() for t in texts if t.strip())
+
+            merged_body.append({
+                "top_pct": top,
+                "left_pct": left,
+                "width_pct": right - left,
+                "height_pct": bottom - top,
+                "role": "body",
+                "bg_color": grp[0].get("bg_color", "#ffffff"),
+                "text_color": grp[0].get("text_color", "#000000"),
+                "en_text": combined_text,
+            })
+
+    # Combine non-body + merged body, sort by position
+    result = non_body + merged_body
+    result.sort(key=lambda b: (b["top_pct"], b["left_pct"]))
+    return result
 
 
 def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -101,6 +203,17 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if _is_short_symbol(text_en):
                     continue
 
+                # Demote red-colored headlines to subheadline.
+                # Red text in the PDF is always a subheadline/kicker,
+                # never the main headline, even if the font is large.
+                if role == "headline":
+                    tc = (blk.get("text_color") or "#000000").lower()
+                    r = int(tc[1:3], 16) if len(tc) == 7 else 0
+                    g = int(tc[3:5], 16) if len(tc) == 7 else 0
+                    b_val = int(tc[5:7], 16) if len(tc) == 7 else 0
+                    if r > 200 and g < 80 and b_val < 80:
+                        role = "subheadline"
+
                 # Promote large multi-line subheadlines to body role
                 # so they get body font styling (not bold/red)
                 if role == "subheadline":
@@ -132,10 +245,14 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "height_pct": blk["height_pct"],
                     "role": role,
                     "bg_color": blk.get("bg_color", "#ffffff"),
+                    "text_color": blk.get("text_color", "#000000"),
                     "en_text": text_en,
                 })
 
-            article["render_blocks"] = render_blocks
+            # Merge consecutive body blocks in the same column
+            # into larger blocks so text has room to flow.
+            merged_render_blocks = _merge_body_blocks(render_blocks)
+            article["render_blocks"] = merged_render_blocks
 
     return pages
 

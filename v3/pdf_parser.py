@@ -215,17 +215,21 @@ def _extract_dict_blocks(page, page_idx, pw, ph):
             continue
 
         # Gather line-level data for potential splitting
-        line_data = []  # list of (lx0, ly0, lx1, ly1, text, span_sizes, span_fonts, span_flags)
+        line_data = []  # list of (lx0, ly0, lx1, ly1, text, span_sizes, span_fonts, span_flags, span_colors)
         for line in block.get("lines", []):
             line_text_parts = []
             sizes = []
             fonts = set()
             flags = 0
+            colors = []  # list of (color_int, char_count) for weighted voting
             lx0, ly0, lx1, ly1 = line["bbox"]
             for span in line.get("spans", []):
                 txt = span.get("text", "")
                 if txt.strip():
                     line_text_parts.append(txt)
+                    # Track span text color (weighted by character count)
+                    span_color = span.get("color", 0)  # int like 0x000000
+                    colors.append((span_color, len(txt.strip())))
                     # Only count non-decorative spans for font metrics
                     if not _is_decorative_span(txt):
                         sizes.append(span.get("size", 12.0))
@@ -241,6 +245,7 @@ def _extract_dict_blocks(page, page_idx, pw, ph):
                     "sizes": sizes if sizes else [12.0],
                     "fonts": fonts,
                     "flags": flags,
+                    "colors": colors,
                 })
 
         if not line_data:
@@ -266,14 +271,29 @@ def _extract_dict_blocks(page, page_idx, pw, ph):
             all_sizes = []
             all_fonts = set()
             all_flags = 0
+            all_colors = []  # (color_int, char_count)
             for ld in group:
                 all_sizes.extend(ld["sizes"])
                 all_fonts |= ld["fonts"]
                 all_flags |= ld["flags"]
+                all_colors.extend(ld.get("colors", []))
 
             avg_size = round(sum(all_sizes) / len(all_sizes), 1) if all_sizes else 12.0
             max_size = round(max(all_sizes), 1) if all_sizes else 12.0
             role = _classify_role(avg_size, max_size, all_fonts, all_flags)
+
+            # Compute dominant text color (weighted by character count)
+            color_weights: dict[int, int] = {}
+            for c_int, c_count in all_colors:
+                color_weights[c_int] = color_weights.get(c_int, 0) + c_count
+            if color_weights:
+                dominant_color_int = max(color_weights, key=color_weights.get)
+                r = (dominant_color_int >> 16) & 0xFF
+                g = (dominant_color_int >> 8) & 0xFF
+                b = dominant_color_int & 0xFF
+                text_color = f"#{r:02x}{g:02x}{b:02x}"
+            else:
+                text_color = "#000000"
 
             sub_id = f"p{page_idx}_b{bi}" if len(line_groups) == 1 else f"p{page_idx}_b{bi}_{gi}"
 
@@ -284,6 +304,7 @@ def _extract_dict_blocks(page, page_idx, pw, ph):
                 "font_size": avg_size,
                 "max_font_size": max_size,
                 "fonts": sorted(all_fonts),
+                "text_color": text_color,
                 "x0": round(gx0, 2), "y0": round(gy0, 2),
                 "x1": round(gx1, 2), "y1": round(gy1, 2),
                 "top_pct": round(gy0 / ph * 100, 3),

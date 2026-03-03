@@ -90,32 +90,33 @@
     .text-block {
       position: absolute;
       overflow: hidden;
-      padding: 3px 5px;
+      padding: 1px 2px;
       box-sizing: border-box;
       transition: opacity 0.25s ease;
       word-break: break-word;
       hyphens: auto;
-    }
-
-    /* --- HEADLINE: large bold serif --- */
-    .text-block.role-headline {
-      font-family: 'Playfair Display', 'Georgia', serif;
-      font-weight: 900;
-      font-size: 22px;
-      letter-spacing: -0.01em;
-      color: #111;
-      line-height: 1.12;
-      display: flex;
-      align-items: flex-start;
+      font-family: 'Source Serif 4', Georgia, serif;
+      font-size: 11px;
+      line-height: 1.3;
       text-align: left;
     }
 
-    /* --- SUBHEADLINE: medium bold sans --- */
+    /* --- HEADLINE: bold serif, larger --- */
+    .text-block.role-headline {
+      font-family: 'Playfair Display', 'Georgia', serif;
+      font-weight: 900;
+      font-size: 30px;
+      letter-spacing: -0.01em;
+      line-height: 1.12;
+      display: flex;
+      align-items: flex-start;
+    }
+
+    /* --- SUBHEADLINE: bold sans --- */
     .text-block.role-subheadline {
       font-family: 'Inter', Arial, sans-serif;
       font-weight: 700;
       font-size: 13px;
-      color: #c0392b;
       line-height: 1.2;
       display: flex;
       align-items: flex-start;
@@ -123,21 +124,14 @@
 
     /* --- BODY: clean readable serif --- */
     .text-block.role-body {
-      font-family: 'Source Serif 4', Georgia, serif;
       font-weight: 400;
-      font-size: 10.5px;
-      color: #222;
-      line-height: 1.4;
-      text-align: left;
     }
 
-    /* --- BYLINE: small italic sans --- */
+    /* --- BYLINE: italic sans --- */
     .text-block.role-byline {
       font-family: 'Inter', Arial, sans-serif;
       font-weight: 600;
-      font-size: 10px;
       font-style: italic;
-      color: #c0392b;
       line-height: 1.25;
     }
 
@@ -145,9 +139,7 @@
     .text-block.role-caption {
       font-family: 'Inter', Arial, sans-serif;
       font-weight: 400;
-      font-size: 9px;
       font-style: italic;
-      color: #555;
       line-height: 1.2;
     }
 
@@ -238,7 +230,8 @@
                         left: {{ '%.3f'|format(blk.left_pct) }}%;
                         width: {{ '%.3f'|format(blk.width_pct) }}%;
                         height: {{ '%.3f'|format(blk.height_pct) }}%;
-                        background: {{ blk.bg_color }};">
+                        background: {{ blk.bg_color }};
+                        color: {{ blk.text_color }};">
               {{ blk.en_text }}
             </div>
             {% endif %}
