@@ -134,7 +134,24 @@
       line-height: 1.2;
     }
 
+    /* ── V2 PDF column overlays ── */
+    .pdf-column {
+      position: absolute;
+      background: rgba(255, 253, 248, 0.96);
+      overflow: hidden;
+      padding: 2px 4px;
+      box-sizing: border-box;
+      font-family: Georgia, 'Times New Roman', serif;
+      color: #1a1a1a;
+      line-height: 1.35;
+      text-align: justify;
+      word-break: break-word;
+      hyphens: auto;
+      transition: opacity 0.2s ease;
+    }
+
     .overlays-hidden .text-region,
+    .overlays-hidden .pdf-column,
     .overlays-hidden .article-overlay {
       opacity: 0 !important;
       pointer-events: none;
@@ -244,7 +261,23 @@
       <div class="page-container">
         <img src="images/page_{{ page.page_num }}.jpg" alt="Page {{ page.page_num }}">
 
-        {% if use_ocr %}
+        {% if use_pdf_columns %}
+          {# ── V2 mode: column-level overlays ── #}
+          {% for art in page.articles %}
+            {% for col in art.get("columns", []) %}
+              {% if col.text_en_html %}
+              <div class="pdf-column"
+                   style="position:absolute;
+                          top:{{ '%.3f'|format(col.top_pct) }}%;
+                          left:{{ '%.3f'|format(col.left_pct) }}%;
+                          width:{{ '%.3f'|format(col.width_pct) }}%;
+                          height:{{ '%.3f'|format(col.height_pct) }}%;"
+                   data-role="body"
+                   data-avg-h="{{ col.avg_h }}">{{ col.text_en_html|safe }}</div>
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+        {% elif use_ocr %}
           {# ── OCR mode: merged-region overlays ── #}
           {% for art in page.articles %}
             {% for rgn in art.get("regions", []) %}
@@ -298,6 +331,7 @@
     const totalPages = slides.length;
     const pageLabel = document.getElementById('pageLabel');
     const USE_OCR = {{ 'true' if use_ocr else 'false' }};
+    const USE_PDF_COLUMNS = {{ 'true' if use_pdf_columns else 'false' }};
 
     function changePage(delta) {
       currentPage = (currentPage + delta + totalPages) % totalPages;
@@ -329,7 +363,8 @@
 
     /* ── Auto-fit text into a merged region ── */
     function autoFitText(el) {
-      const text = el.dataset.text;
+      const datasetText = (el.dataset.text || '').trim();
+      const text = datasetText || (el.innerText || '').trim();
       if (!text) return false;
 
       const role = el.dataset.role;
@@ -355,7 +390,9 @@
       }
 
       el.style.fontSize = fontSize + 'px';
-      el.textContent = text;
+      if (datasetText) {
+        el.textContent = text;
+      }
 
       // For headline/subheadline, allow shrink-to-fit.
       // For body, do at most tiny adjustment and let truncation handle overflow.
@@ -383,8 +420,16 @@
     function fillOverlays(slideEl) {
       if (!slideEl) return;
 
-      if (USE_OCR) {
+      if (USE_OCR || USE_PDF_COLUMNS) {
+        const sel = USE_OCR ? '.text-region' : '.pdf-column';
         slideEl.querySelectorAll('.text-region').forEach(el => {
+          if (el.dataset.filled) return;
+          const ok = autoFitText(el);
+          if (ok) {
+            el.dataset.filled = '1';
+          }
+        });
+        slideEl.querySelectorAll(sel).forEach(el => {
           if (el.dataset.filled) return;
           const ok = autoFitText(el);
           if (ok) {

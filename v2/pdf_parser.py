@@ -286,7 +286,7 @@ def _assign_storyid(
     return best_sid
 
 
-def _sort_article_blocks(blocks: list[dict[str, Any]], zone_scaled_width: float) -> list[dict[str, Any]]:
+def _sort_article_blocks(blocks: list[dict[str, Any]], page_w: float) -> list[dict[str, Any]]:
     """
     Column-aware block ordering with dynamic binning.
 
@@ -298,11 +298,66 @@ def _sort_article_blocks(blocks: list[dict[str, Any]], zone_scaled_width: float)
     if not blocks:
         return blocks
 
-    est_col_width = max(1.0, float(zone_scaled_width) / 18.0)
+    est_col_width = max(1.0, float(page_w) / 50.0)
     for block in blocks:
         block["col_bin"] = int(float(block.get("x0", 0.0)) / est_col_width)
 
     return sorted(blocks, key=lambda b: (int(b["col_bin"]), float(b["y0"])))
+
+
+def _split_compound_articles(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Split lazy compound story zones into parts using geometric jump heuristics."""
+    split_articles: list[dict[str, Any]] = []
+
+    for article in articles:
+        blocks = article.get("blocks", [])
+        if not blocks:
+            split_articles.append(article)
+            continue
+
+        base_storyid = str(article.get("storyid", ""))
+        current_blocks: list[dict[str, Any]] = []
+        part_idx = 1
+        prev_block: dict[str, Any] | None = None
+
+        for current_block in blocks:
+            should_split = False
+            if prev_block is not None and current_blocks:
+                gap_y = float(current_block["y0"]) - float(prev_block["y1"])
+                width_jump = (
+                    float(current_block["width"]) > float(prev_block["width"]) * 1.5
+                    if float(prev_block["width"]) > 0
+                    else False
+                )
+                if gap_y > 25.0 or width_jump:
+                    should_split = True
+
+            if should_split:
+                sid = base_storyid if part_idx == 1 else f"{base_storyid}_part{part_idx}"
+                split_articles.append(
+                    {
+                        "storyid": sid,
+                        "zones": article.get("zones", []),
+                        "blocks": current_blocks,
+                    }
+                )
+                part_idx += 1
+                current_blocks = []
+
+            current_blocks.append(current_block)
+            prev_block = current_block
+
+        if current_blocks:
+            sid = base_storyid if part_idx == 1 else f"{base_storyid}_part{part_idx}"
+            split_articles.append(
+                {
+                    "storyid": sid,
+                    "zones": article.get("zones", []),
+                    "blocks": current_blocks,
+                }
+            )
+
+    return split_articles
 
 
 def parse_pdf(
@@ -386,11 +441,7 @@ def parse_pdf(
                     articles_map[sid]["blocks"].append(block)
 
             for article in articles_map.values():
-                zone_scaled_width = max(
-                    (float(z["scaled"].get("width", 0.0)) for z in article["zones"]),
-                    default=0.0,
-                )
-                article["blocks"] = _sort_article_blocks(article["blocks"], zone_scaled_width)
+                article["blocks"] = _sort_article_blocks(article["blocks"], page_w)
 
             unassigned.sort(key=lambda b: (float(b["y0"]), float(b["x0"])))
 
@@ -406,6 +457,7 @@ def parse_pdf(
                 return (10_000_000.0, 10_000_000.0)
 
             articles.sort(key=_article_sort_key)
+            articles = _split_compound_articles(articles)
 
             pages.append(
                 {

@@ -102,3 +102,25 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+python main.py "data/Aaj tak-Template-26.02.2026 PAGE-1.pdf" 2026-03-02
+"""
+
+"""
+commit this and lets move to fix the remaining major issues with the render.
+1. in the 1st photo i gave you, the 1st line is a subheading or whatever role "India takes on Zimbabwe in T20" has in the t20 world cup article with red text. but its being shown as a heading along with the ACTUAL heading. also there is a clear gap in the sentence, it breaks and it shows white blank box, also shows hindi text below and then writes text. also "key points to remember" has white text color in original pdf but here it gets red text . it has red bg but white text color.
+2. the second image shows the pointer and quotes section of 1st article. this section is really messed up. no point is completely shown . the left quote breaks too much. it writes the quote then says who its from (narendra modi) then there is another point which breaks the render of the quote in middle which is in red and also says “We share the pain. - Narendra Modi, Prime Minister” . why is there two of them. rendedred on same block? also look at the second quote. only' Benjamin Netanyahu, ' was written in red in original pdf, but this takes the complete sentence and turns it to red.
+find other irregularities in render of this article if any.
+3.in 3rd image only the subheading (as the heading) is printed not the heading ' gabbar got justice'.
+4. rest of the artciles are really good. everything is rendered where it should be doesnt cover images and hindi text is hidden. however look at the 4th image, half text from some text/textboxes is hidden. for ex:
+The Enforcement 'Directorate (ED)'
+has taken a major action 'against'
+Reliance Group 'Chairman' 
+all text in quotes ("") are hidden as you can see
+one more example look at image 5.
+Prime Minister Narendra Modi' is on a visit to Israel.'
+Netanyahu broke protocol to wel-'come Modi at the airport.'
+
+and many more. almost every text block has this problem of getting hidden. how to make them visible again?
+"""
