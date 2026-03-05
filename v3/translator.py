@@ -459,9 +459,12 @@ def _translate_blocks_batched(
                     text_only_indices = [grp_indices[0]]
 
                 left_pct = min(blocks[j]["left_pct"] for j in text_only_indices)
+                # Right edge uses ALL blocks in the group so the
+                # overlay covers the full text area (including text
+                # that follows an embedded bullet on the same line).
                 right_pct = max(
                     blocks[j]["left_pct"] + blocks[j]["width_pct"]
-                    for j in text_only_indices
+                    for j in grp_indices
                 )
                 blk["_pointer_bottom_pct"] = bottom_pct
                 blk["_pointer_left_pct"] = left_pct
