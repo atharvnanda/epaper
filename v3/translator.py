@@ -47,6 +47,11 @@ CRITICAL RULES:
 - Even if a value is a single word or sentence fragment, translate it.
 - headline translations should be concise and impactful (newspaper headline style).
 - subheadline translations should be brief (1-2 lines).
+- IMPORTANT: Some subheadline blocks may be FRAGMENTS of a single bullet point
+  split across multiple lines. Each fragment should still be translated as a
+  grammatically correct phrase or sentence, NOT as disconnected words.
+  For example: "बर्बर, हमास के आतंक" should translate to "Barbaric; Hamas' terror"
+  not just "Brutal, Hamas terrorists".
 - body translations should be natural English paragraphs.
 - byline: just translate the location/author, keep it short.
 - caption: brief descriptive text.

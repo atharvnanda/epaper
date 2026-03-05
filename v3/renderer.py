@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
@@ -30,6 +31,72 @@ from jinja2 import Environment, FileSystemLoader
 DATA_DIR = "data"
 OUTPUT_DIR = "output"
 TEMPLATE_DIR = "templates"
+
+# ---------------------------------------------------------------------------
+# Reference page dimensions (at CSS render width of 1120px).
+# Used for headline font-size auto-fitting.
+# ---------------------------------------------------------------------------
+_RENDER_WIDTH_PX = 1120
+_DEFAULT_ASPECT = 6134 / 3450   # typical Aaj Tak page
+_RENDER_HEIGHT_PX = _RENDER_WIDTH_PX * _DEFAULT_ASPECT  # ~1991 px
+
+# Known brand taglines that should NOT be translated / overlaid
+_BRAND_TAGLINES = re.compile(
+    r"^(सबसे\s*तेज़?\s*$)",
+    re.IGNORECASE,
+)
+
+# Regex matching standalone "PAGE-XX" labels
+_PAGE_RE = re.compile(r"^PAGE\s*-\s*\d+$", re.IGNORECASE)
+# Regex matching PAGE-XX anywhere in text
+_PAGE_CONTAINS_RE = re.compile(r"PAGE\s*-\s*\d+", re.IGNORECASE)
+
+# ---------------------------------------------------------------------------
+# Banner / navbar detection
+# ---------------------------------------------------------------------------
+_BANNER_TOP_PCT_LIMIT = 15.0
+_NEUTRAL_BACKGROUNDS = {"#ffffff", "#f8f8f8", "#f9f9f9", "#fafafa", "#eeeeee"}
+
+
+def _is_banner_block(block: dict[str, Any]) -> bool:
+    """Return True if this block sits in the coloured banner/navbar region."""
+    if block["top_pct"] >= _BANNER_TOP_PCT_LIMIT:
+        return False
+    bg = (block.get("bg_color") or "#ffffff").lower()
+    return bg not in _NEUTRAL_BACKGROUNDS
+
+
+def _fit_banner_font_size(block: dict[str, Any]) -> int:
+    """
+    Compute a font size (px) that fills a banner block nicely.
+    Only used for small navbar/banner blocks — regular article blocks
+    keep their CSS role-based sizes or headline auto-fit.
+    Clamped between 10–28 px.
+    """
+    MIN_FS, MAX_FS = 10, 28
+    text = (block.get("en_text") or "").strip()
+    text_len = len(text)
+    if text_len == 0:
+        return 14
+
+    w_px = block["width_pct"] / 100.0 * _RENDER_WIDTH_PX
+    h_px = block["height_pct"] / 100.0 * _RENDER_HEIGHT_PX
+    usable_w = max(w_px - 4, 10)
+    usable_h = max(h_px - 4, 10)
+
+    margin = 1.15
+    best = MIN_FS
+    for fs in range(MIN_FS, MAX_FS + 1):
+        char_w = fs * 0.55
+        line_h = fs * 1.25
+        chars_per_line = usable_w / char_w
+        num_lines = usable_h / line_h
+        capacity = chars_per_line * num_lines
+        if capacity >= text_len * margin:
+            best = fs
+        else:
+            break
+    return best
 
 
 def _embed_image(image_path: str) -> str:
@@ -81,62 +148,33 @@ def _is_all_english(text: str) -> bool:
     return True
 
 
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Reference page dimensions (at CSS render width of 1120px).
-# Used only for banner/navbar font-size fitting, NOT for regular article blocks.
-# ---------------------------------------------------------------------------
-_RENDER_WIDTH_PX = 1120
-_DEFAULT_ASPECT = 6134 / 3450   # typical Aaj Tak page
-_RENDER_HEIGHT_PX = _RENDER_WIDTH_PX * _DEFAULT_ASPECT  # ~1991 px
-
-# Blocks in the top N% of the page with a coloured background are treated
-# as "banner" blocks and get a dynamically fitted font size instead of the
-# fixed CSS role-based size.  This threshold should cover the navbar but
-# not bleed into regular article area.
-_BANNER_TOP_PCT_LIMIT = 15.0
-# Neutral / white-ish backgrounds that should NOT be treated as banner
-_NEUTRAL_BACKGROUNDS = {"#ffffff", "#f8f8f8", "#f9f9f9", "#fafafa", "#eeeeee"}
-
-
-def _is_banner_block(block: dict[str, Any]) -> bool:
-    """Return True if this block sits in the banner/navbar region."""
-    if block["top_pct"] >= _BANNER_TOP_PCT_LIMIT:
-        return False
-    bg = (block.get("bg_color") or "#ffffff").lower()
-    return bg not in _NEUTRAL_BACKGROUNDS
-
-
-def _fit_font_size(block: dict[str, Any]) -> int:
+def _fit_headline_font_size(block: dict[str, Any]) -> int:
     """
-    Compute a font size (px) that fills the banner block's bbox nicely.
+    Compute the largest font size (px) that fits the headline text
+    inside its bounding box at the standard 1120px render width.
 
-    Only used for small banner/navbar blocks -- regular article blocks
-    keep their CSS role-based sizes untouched.
-
-    Searches for the largest integer font size whose estimated text
-    capacity exceeds the actual text length (with a 15 % margin).
-    Clamped between 10–28 px.
+    Only used for headline blocks — body/subheadline keep CSS defaults.
+    Clamped between 14–42 px.
     """
-    MIN_FS, MAX_FS = 10, 28
+    MIN_FS, MAX_FS = 14, 42
 
     text = (block.get("en_text") or "").strip()
     text_len = len(text)
     if text_len == 0:
-        return 14
+        return 30  # CSS default
 
     w_px = block["width_pct"] / 100.0 * _RENDER_WIDTH_PX
     h_px = block["height_pct"] / 100.0 * _RENDER_HEIGHT_PX
 
-    usable_w = max(w_px - 4, 10)
+    usable_w = max(w_px - 6, 10)
     usable_h = max(h_px - 4, 10)
 
-    margin = 1.15
+    margin = 1.15  # 15% safety margin for word-wrap variance
     best = MIN_FS
 
     for fs in range(MIN_FS, MAX_FS + 1):
-        char_w = fs * 0.55
-        line_h = fs * 1.25
+        char_w = fs * 0.55       # average char width for proportional serif
+        line_h = fs * 1.15       # headlines have tight line-height
         chars_per_line = usable_w / char_w
         num_lines = usable_h / line_h
         capacity = chars_per_line * num_lines
@@ -146,6 +184,67 @@ def _fit_font_size(block: dict[str, Any]) -> int:
             break
 
     return best
+
+
+def _trim_headline_heights(render_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Trim headline block heights so they don't overlap the block below.
+
+    The PDF often gives headline bounding boxes taller than the actual
+    text area, causing the solid-background overlay to cover part of
+    the photo or byline that sits just below the headline text.
+
+    For each headline, if the next block (by top_pct) starts *inside*
+    or very close to the headline's bottom, we shrink the headline
+    height to end just above that next block.
+    """
+    if not render_blocks:
+        return render_blocks
+
+    # Sort by vertical position
+    sorted_blocks = sorted(render_blocks, key=lambda b: b["top_pct"])
+
+    result = []
+    for i, blk in enumerate(sorted_blocks):
+        role = blk.get("role", "body")
+        if role != "headline":
+            result.append(blk)
+            continue
+
+        hl_top = blk["top_pct"]
+        hl_bottom = hl_top + blk["height_pct"]
+        hl_left = blk["left_pct"]
+        hl_right = hl_left + blk["width_pct"]
+
+        # Find the next block that sits below this headline and
+        # overlaps it horizontally (i.e. same column / article region)
+        next_top = None
+        for j in range(i + 1, len(sorted_blocks)):
+            other = sorted_blocks[j]
+            o_top = other["top_pct"]
+            o_left = other["left_pct"]
+            o_right = o_left + other["width_pct"]
+
+            # Must start at or below the headline's top
+            if o_top <= hl_top:
+                continue
+
+            # Must overlap horizontally (same column area)
+            if o_right < hl_left or o_left > hl_right:
+                continue
+
+            next_top = o_top
+            break
+
+        if next_top is not None and next_top < hl_bottom:
+            # Trim: headline ends just above the next block
+            new_height = next_top - hl_top
+            if new_height > 0.5:  # keep at least 0.5% height
+                blk = {**blk, "height_pct": new_height}
+
+        result.append(blk)
+
+    return result
 
 
 def _merge_adjacent_blocks(
@@ -403,19 +502,14 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     3. Promote large subheadline blocks (tall multi-line quote boxes)
        to role 'body' so they get body styling instead of bold red.
     """
-    import re
-    _PAGE_RE = re.compile(r"PAGE\s*-\s*\d+", re.IGNORECASE)
-
     for page in pages:
         # ── Pre-scan: find the top_pct of standalone PAGE-XX blocks
-        #    on this page. These tell us where the "page" labels sit
-        #    so we can trim any other block that embeds PAGE-XX in its
-        #    text to end just above that line.
+        #    on this page so we can trim banner overlays above them.
         page_label_tops: list[float] = []
         for article in page.get("articles", []):
             for blk in article.get("blocks", []):
                 orig = (blk.get("text") or "").strip()
-                if orig and _is_all_english(orig) and _PAGE_RE.search(orig):
+                if orig and _is_all_english(orig) and _PAGE_RE.match(orig):
                     page_label_tops.append(blk["top_pct"])
 
         for article in page.get("articles", []):
@@ -454,6 +548,12 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if original_text and _is_all_english(original_text):
                     continue
 
+                # Skip brand taglines (e.g. "सबसे तेज़") — these are
+                # part of the Aaj Tak logo and should show through
+                # from the underlying page image.
+                if original_text and _BRAND_TAGLINES.match(original_text):
+                    continue
+
                 # Demote red-colored headlines to subheadline.
                 # Red text in the PDF is always a subheadline/kicker,
                 # never the main headline, even if the font is large.
@@ -489,63 +589,62 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     if already_covered:
                         continue
 
-                # ── Trim blocks that embed PAGE-XX in their original
-                #    text.  Shrink the overlay height so it ends just
-                #    above the PAGE label, letting the underlying image
-                #    show the PAGE-XX badge beneath.
-                blk_top = blk["top_pct"]
-                blk_height = blk["height_pct"]
-                if original_text and _PAGE_RE.search(original_text):
-                    blk_bottom = blk_top + blk_height
-                    # Find the closest PAGE label top that falls inside
-                    # this block's vertical range
-                    cutoffs = [
-                        t for t in page_label_tops
-                        if blk_top < t < blk_bottom
-                    ]
-                    if cutoffs:
-                        # Trim to end just above the PAGE label
-                        trim_to = min(cutoffs)
-                    else:
-                        # No separate PAGE block found; use the same
-                        # cutoff as any PAGE label on this page that
-                        # starts near our block's bottom area
-                        nearby = [
-                            t for t in page_label_tops
-                            if abs(t - blk_bottom) < 3.0
-                        ]
-                        trim_to = min(nearby) if nearby else None
-
-                    if trim_to is not None and trim_to > blk_top:
-                        blk_height = trim_to - blk_top
-
-                rb = {
-                    "top_pct": blk_top,
+                render_blocks.append({
+                    "top_pct": blk["top_pct"],
                     "left_pct": blk["left_pct"],
                     "width_pct": blk["width_pct"],
-                    "height_pct": blk_height,
+                    "height_pct": blk["height_pct"],
                     "role": role,
                     "bg_color": blk.get("bg_color", "#ffffff"),
                     "text_color": blk.get("text_color", "#000000"),
                     "en_text": text_en,
-                }
+                })
 
-                # Only banner/navbar blocks get a dynamically fitted
-                # font size.  Regular article blocks keep the CSS
-                # role-based defaults (headline 30px, body 11px, etc.).
-                if _is_banner_block(rb):
-                    rb["font_size_px"] = _fit_font_size(rb)
+            # ── Banner block processing: trim height for blocks
+            #    that contain PAGE-XX and fit font sizes ──
+            for rb in render_blocks:
+                if not _is_banner_block(rb):
+                    continue
+                # Trim banner blocks whose original source text
+                # contained PAGE-XX: shrink height to end just
+                # above the PAGE label so it shows through.
+                blk_top = rb["top_pct"]
+                blk_bottom = blk_top + rb["height_pct"]
+                # Check if any PAGE label falls inside this block
+                cutoffs = [
+                    t for t in page_label_tops
+                    if blk_top < t < blk_bottom
+                ]
+                if cutoffs:
+                    trim_to = min(cutoffs)
+                    if trim_to > blk_top:
+                        rb["height_pct"] = trim_to - blk_top
+                elif page_label_tops:
+                    # No PAGE label inside, but check if one is nearby
+                    nearby = [
+                        t for t in page_label_tops
+                        if abs(t - blk_bottom) < 3.0
+                    ]
+                    if nearby:
+                        trim_to = min(nearby)
+                        if trim_to > blk_top:
+                            rb["height_pct"] = trim_to - blk_top
 
-                render_blocks.append(rb)
+            # Trim headline heights so they don't overlap the
+            # block below (photo / byline area).
+            render_blocks = _trim_headline_heights(render_blocks)
 
             # Merge consecutive same-role blocks in the same column.
             merged_render_blocks = _merge_adjacent_blocks(render_blocks)
 
-            # Recompute font size only for banner blocks (merging may
-            # have changed dimensions).  Article blocks are untouched.
+            # Auto-fit font size:
+            # - Banner blocks get banner-specific fitting (10–28px)
+            # - Regular headline blocks get headline fitting (14–42px)
             for rb in merged_render_blocks:
                 if _is_banner_block(rb):
-                    rb["font_size_px"] = _fit_font_size(rb)
+                    rb["font_size_px"] = _fit_banner_font_size(rb)
+                elif rb.get("role") == "headline":
+                    rb["font_size_px"] = _fit_headline_font_size(rb)
 
             article["render_blocks"] = merged_render_blocks
 

@@ -105,7 +105,7 @@
     .text-block.role-headline {
       font-family: 'Playfair Display', 'Georgia', serif;
       font-weight: 900;
-      font-size: 28px;
+      font-size: 30px;
       letter-spacing: -0.01em;
       line-height: 1.12;
       display: flex;
@@ -116,7 +116,7 @@
     .text-block.role-subheadline {
       font-family: 'Inter', Arial, sans-serif;
       font-weight: 700;
-      font-size: 14px;
+      font-size: 13px;
       line-height: 1.2;
       display: flex;
       align-items: flex-start;
@@ -232,8 +232,7 @@
                         height: {{ '%.3f'|format(blk.height_pct) }}%;
                         background: {{ blk.bg_color }};
                         color: {{ blk.text_color }};
-                        {% if blk.font_size_px is defined and blk.font_size_px %}font-size: {{ blk.font_size_px }}px;
-                        line-height: {{ (blk.font_size_px * 1.2)|round(1) }}px;{% endif %}">
+                        {% if blk.font_size_px is defined and blk.font_size_px %}font-size: {{ blk.font_size_px }}px; line-height: {{ (blk.font_size_px * 1.15)|round(1) }}px;{% endif %}">
               {{ blk.en_text }}
             </div>
             {% endif %}
