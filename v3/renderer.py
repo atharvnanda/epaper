@@ -247,6 +247,64 @@ def _trim_headline_heights(render_blocks: list[dict[str, Any]]) -> list[dict[str
     return result
 
 
+def _resolve_horizontal_overlaps(render_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Trim widths of overlapping render blocks so they don't cover each other.
+
+    When two blocks sit at similar vertical positions (same band) and one
+    block's right edge extends past another block's left edge, trim the
+    wider/leftmost block's width so it ends at the other block's left edge.
+
+    This prevents issues like:
+      - A quote attribution overlay extending into an adjacent quote box
+      - Two side-by-side blocks overlapping due to generous bounding boxes
+    """
+    if len(render_blocks) < 2:
+        return render_blocks
+
+    VERT_TOLERANCE = 2.0  # % — blocks within this are "same vertical band"
+
+    for i, a in enumerate(render_blocks):
+        a_top = a["top_pct"]
+        a_bottom = a_top + a["height_pct"]
+        a_left = a["left_pct"]
+        a_right = a_left + a["width_pct"]
+
+        for j, b in enumerate(render_blocks):
+            if i == j:
+                continue
+
+            b_top = b["top_pct"]
+            b_bottom = b_top + b["height_pct"]
+            b_left = b["left_pct"]
+            b_right = b_left + b["width_pct"]
+
+            # Check if they overlap vertically (same band)
+            v_overlap = min(a_bottom, b_bottom) - max(a_top, b_top)
+            if v_overlap < VERT_TOLERANCE:
+                continue
+
+            # Check if they overlap horizontally
+            h_overlap = min(a_right, b_right) - max(a_left, b_left)
+            if h_overlap <= 0:
+                continue
+
+            # They overlap — trim the one whose right edge extends further
+            # to the right, by shrinking its width so it ends at the other's
+            # left edge.  If block A is to the left, trim A's right edge.
+            if a_left < b_left and a_right > b_left:
+                # A extends past B's left — trim A
+                new_width = b_left - a_left
+                if new_width > 1.0:  # keep at least 1% width
+                    a["width_pct"] = new_width
+                    a_right = a_left + new_width
+            elif b_left < a_left and b_right > a_left:
+                # B extends past A's left — trim B (handled when B is 'a')
+                pass
+
+    return render_blocks
+
+
 def _merge_adjacent_blocks(
     blocks: list[dict[str, Any]],
     merge_roles: set[str] = frozenset({"body", "subheadline"}),
@@ -535,6 +593,11 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if not text_en:
                     continue
 
+                # Skip blocks that were merged into a pointer group
+                # (their text was combined into the group's first block)
+                if blk.get("_pointer_merged"):
+                    continue
+
                 role = blk.get("role", "body")
 
                 # Skip pure bullet/symbol blocks
@@ -589,16 +652,65 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     if already_covered:
                         continue
 
+                # Expand pointer group leader blocks to cover all
+                # fragments in the group (translator merged their text).
+                blk_top = blk["top_pct"]
+                blk_left = blk["left_pct"]
+                blk_width = blk["width_pct"]
+                blk_height = blk["height_pct"]
+                if "_pointer_bottom_pct" in blk:
+                    blk_height = blk["_pointer_bottom_pct"] - blk_top
+
+                # For left/width: use pointer bounds BUT never start
+                # further left than the leader block's own position.
+                # The _pointer_left_pct may include bullet-marker blocks
+                # whose left edge sits at the bullet position — using it
+                # would cover the bullet point in the underlying image.
+                if "_pointer_left_pct" in blk:
+                    ptr_left = blk["_pointer_left_pct"]
+                    # Only use the pointer left if it's NOT significantly
+                    # to the left of the leader's own text position.
+                    # A small leftward extension (< 1%) is OK (rounding),
+                    # but larger means it includes a bullet marker.
+                    if blk_left - ptr_left > 1.0:
+                        # Pointer left includes bullet area — keep the
+                        # leader's own left edge to preserve the bullet
+                        pass
+                    else:
+                        blk_left = ptr_left
+                if "_pointer_width_pct" in blk:
+                    # Recalculate width to cover all text fragments,
+                    # using the (possibly adjusted) left edge.
+                    ptr_right = blk.get("_pointer_left_pct", blk["left_pct"]) + blk["_pointer_width_pct"]
+                    blk_width = max(blk_width, ptr_right - blk_left)
+
                 render_blocks.append({
-                    "top_pct": blk["top_pct"],
-                    "left_pct": blk["left_pct"],
-                    "width_pct": blk["width_pct"],
-                    "height_pct": blk["height_pct"],
+                    "top_pct": blk_top,
+                    "left_pct": blk_left,
+                    "width_pct": blk_width,
+                    "height_pct": blk_height,
                     "role": role,
                     "bg_color": blk.get("bg_color", "#ffffff"),
                     "text_color": blk.get("text_color", "#000000"),
                     "en_text": text_en,
+                    "text_top_pct": blk.get("text_top_pct", blk["top_pct"]),
                 })
+
+            # ── Trim overlays for blocks with decorative elements ──
+            # When a block starts with large decorative characters
+            # (e.g. giant quote marks " " "), the block bbox starts
+            # much higher than the actual text.  Trim the overlay so
+            # it starts where the real text begins, leaving the
+            # underlying decorative artwork visible.
+            for rb in render_blocks:
+                text_top = rb.get("text_top_pct", rb["top_pct"])
+                block_top = rb["top_pct"]
+                # Only trim if the decorative header is significant
+                # (more than 1% of page height)
+                if text_top - block_top > 1.0:
+                    old_bottom = block_top + rb["height_pct"]
+                    rb["top_pct"] = text_top
+                    rb["height_pct"] = old_bottom - text_top
 
             # ── Banner block processing: trim height for blocks
             #    that contain PAGE-XX and fit font sizes ──
@@ -636,6 +748,10 @@ def _prepare_render_blocks(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
             # Merge consecutive same-role blocks in the same column.
             merged_render_blocks = _merge_adjacent_blocks(render_blocks)
+
+            # Resolve horizontal overlaps between blocks at similar
+            # vertical positions (e.g. side-by-side quote attributions).
+            merged_render_blocks = _resolve_horizontal_overlaps(merged_render_blocks)
 
             # Auto-fit font size:
             # - Banner blocks get banner-specific fitting (10–28px)

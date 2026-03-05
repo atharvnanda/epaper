@@ -222,6 +222,7 @@ def _extract_dict_blocks(page, page_idx, pw, ph):
             fonts = set()
             flags = 0
             colors = []  # list of (color_int, char_count) for weighted voting
+            has_real_text = False  # True if line has non-decorative content
             lx0, ly0, lx1, ly1 = line["bbox"]
             for span in line.get("spans", []):
                 txt = span.get("text", "")
@@ -235,6 +236,7 @@ def _extract_dict_blocks(page, page_idx, pw, ph):
                         sizes.append(span.get("size", 12.0))
                         fonts.add(span.get("font", ""))
                         flags |= span.get("flags", 0)
+                        has_real_text = True
                     else:
                         # Still track font name for decorative spans
                         fonts.add(span.get("font", ""))
@@ -246,6 +248,7 @@ def _extract_dict_blocks(page, page_idx, pw, ph):
                     "fonts": fonts,
                     "flags": flags,
                     "colors": colors,
+                    "has_real_text": has_real_text,
                 })
 
         if not line_data:
@@ -297,6 +300,18 @@ def _extract_dict_blocks(page, page_idx, pw, ph):
 
             sub_id = f"p{page_idx}_b{bi}" if len(line_groups) == 1 else f"p{page_idx}_b{bi}_{gi}"
 
+            # Compute text_top_pct: the Y position where actual
+            # (non-decorative) text lines begin.  If the block starts
+            # with large decorative elements (e.g. giant quote marks),
+            # text_top_pct will be below top_pct, telling the renderer
+            # to trim the overlay so it doesn't cover the decorative area.
+            real_lines = [ld for ld in group if ld.get("has_real_text", True)]
+            if real_lines:
+                text_y0 = min(ld["y0"] for ld in real_lines)
+            else:
+                text_y0 = gy0
+            text_top_pct = round(text_y0 / ph * 100, 3)
+
             raw_blocks.append({
                 "id": sub_id,
                 "text": all_text.strip(),
@@ -311,6 +326,7 @@ def _extract_dict_blocks(page, page_idx, pw, ph):
                 "left_pct": round(gx0 / pw * 100, 3),
                 "width_pct": round((gx1 - gx0) / pw * 100, 3),
                 "height_pct": round((gy1 - gy0) / ph * 100, 3),
+                "text_top_pct": text_top_pct,
             })
 
     return raw_blocks
